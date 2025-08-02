@@ -65,8 +65,8 @@ export default function Dashboard() {
   });
   const router = useRouter();
 
+  // Fetch user settings only once on component mount and when page regains focus
   useEffect(() => {
-    fetchDashboardData(1, categoryPeriod, selectedDate);
     fetchUserSettings();
     
     // Refresh settings when page becomes visible (returning from settings page)
@@ -76,6 +76,11 @@ export default function Dashboard() {
     
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
+  }, []);
+
+  // Fetch dashboard data when filters change
+  useEffect(() => {
+    fetchDashboardData(1, categoryPeriod, selectedDate);
   }, [categoryPeriod, selectedDate]);
 
   const handlePageChange = (newPage: number) => {
@@ -390,7 +395,12 @@ export default function Dashboard() {
           <div className="p-4 sm:p-6">
             {data?.categoryStats && data.categoryStats.length > 0 ? (
               <div className="flex flex-col">
-                <h3 className="text-md font-medium text-gray-800 mb-4">Category Details</h3>
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-md font-medium text-gray-800">Category Details</h3>
+                  <span className="text-md font-semibold text-gray-700">
+                    Total: {formatCurrency(data.categoryStats.reduce((sum, category) => sum + category.totalAmount, 0))}
+                  </span>
+                </div>
                 <div className="overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
                   {data.categoryStats.map((category) => {
                     const percentage = parseFloat(category.percentage || '0');
