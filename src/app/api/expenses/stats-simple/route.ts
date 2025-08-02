@@ -85,7 +85,7 @@ export async function GET(req: NextRequest) {
 
     // Calculate expenses for the selected period (for category stats)
     let periodExpenses;
-    let periodStart, periodEnd;
+    let periodStart: Date, periodEnd: Date;
 
     if (period === 'daily') {
       periodStart = startOfSelectedDay;
@@ -111,7 +111,7 @@ export async function GET(req: NextRequest) {
       categories = await Category.find({ _id: { $in: categoryIds } });
       console.log('Found categories:', categories.length);
     } catch (catError) {
-      console.log('Error fetching categories:', catError.message);
+      console.log('Error fetching categories:', catError instanceof Error ? catError.message : 'Unknown error');
     }
     const categoryLookup = new Map(categories.map(c => [c._id.toString(), c]));
     
