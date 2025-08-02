@@ -98,9 +98,9 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
     return (
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-4 sm:bottom-6 right-4 sm:right-6 bg-blue-600 hover:bg-blue-700 text-white rounded-full p-3 sm:p-4 shadow-lg z-40"
+        className="fixed bottom-4 sm:bottom-6 right-4 sm:right-6 bg-blue-600 hover:bg-blue-700 text-white rounded-full w-[50px] h-[50px] flex items-center justify-center shadow-lg z-40"
       >
-        <Plus size={20} className="sm:w-6 sm:h-6" />
+        <Plus size={24} />
       </button>
     );
   }

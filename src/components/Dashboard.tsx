@@ -407,7 +407,7 @@ export default function Dashboard() {
           <div className="mt-6 sm:mt-8 bg-white rounded-lg shadow">
             <div className="px-4 sm:px-6 py-4 border-b border-gray-200 flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-2 sm:space-y-0">
               <h2 className="text-base sm:text-lg font-semibold text-gray-900">
-                Recent Expenses
+                Recent Spent
               </h2>
               <div className="text-sm text-gray-500">
                 Showing {data.recent.expenses.length} of {data.recent.pagination.totalItems} expenses
@@ -430,7 +430,7 @@ export default function Dashboard() {
                           {expense.description}
                         </p>
                         <p className="text-xs sm:text-sm text-gray-500 truncate">
-                          {expense.categoryId?.name || 'Uncategorized'} • {' '}
+                          {expense.categoryId?.name || new Date(expense.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {' '}
                           {new Date(expense.date).toLocaleDateString()}
                         </p>
                       </div>
