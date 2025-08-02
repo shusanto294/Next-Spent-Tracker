@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     }
 
     await connectDB();
-    const { amount, categoryId, date } = await req.json();
+    const { amount, description, categoryId, date } = await req.json();
     
     if (!amount || !categoryId) {
       return NextResponse.json({ error: 'Amount and category are required' }, { status: 400 });
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
 
     const expense = await Expense.create({
       amount: parseFloat(amount),
-      description: `${category.name} expense`,
+      description: description || `${category.name} expense`,
       categoryId,
       userId: userObjectId || user.userId,
       date: date ? new Date(date) : new Date(),

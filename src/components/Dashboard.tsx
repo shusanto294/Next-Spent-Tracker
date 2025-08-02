@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import ExpenseForm from './ExpenseForm';
-import { LogOut, Calendar, TrendingUp, Settings, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react';
+import { LogOut, Calendar, TrendingUp, Settings, ChevronLeft, ChevronRight, CalendarDays, Trash2, X } from 'lucide-react';
 
 interface CategoryStat {
   categoryId: string;
@@ -52,6 +52,17 @@ export default function Dashboard() {
   const [currentPage, setCurrentPage] = useState(1);
   const [categoryPeriod, setCategoryPeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{
+    isOpen: boolean;
+    type: 'expense' | 'category' | null;
+    id: string | null;
+    name: string;
+  }>({
+    isOpen: false,
+    type: null,
+    id: null,
+    name: '',
+  });
   const router = useRouter();
 
   useEffect(() => {
@@ -190,6 +201,49 @@ export default function Dashboard() {
     const formatted = `${userSettings.currencySymbol}${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     console.log('Formatted currency:', formatted);
     return formatted;
+  };
+
+  const handleDeleteExpense = async (expenseId: string, description: string) => {
+    setDeleteConfirmation({
+      isOpen: true,
+      type: 'expense',
+      id: expenseId,
+      name: description,
+    });
+  };
+
+  const handleDeleteCategory = async (categoryId: string, categoryName: string) => {
+    setDeleteConfirmation({
+      isOpen: true,
+      type: 'category',
+      id: categoryId,
+      name: categoryName,
+    });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmation.id || !deleteConfirmation.type) return;
+
+    try {
+      const endpoint = deleteConfirmation.type === 'expense' 
+        ? `/api/expenses/${deleteConfirmation.id}`
+        : `/api/categories/${deleteConfirmation.id}`;
+      
+      const response = await fetch(endpoint, { method: 'DELETE' });
+      
+      if (response.ok) {
+        setDeleteConfirmation({ isOpen: false, type: null, id: null, name: '' });
+        fetchDashboardData(currentPage, categoryPeriod, selectedDate);
+      } else {
+        console.error('Delete failed:', response.statusText);
+      }
+    } catch (error) {
+      console.error('Error deleting:', error);
+    }
+  };
+
+  const cancelDelete = () => {
+    setDeleteConfirmation({ isOpen: false, type: null, id: null, name: '' });
   };
 
   if (isLoading) {
@@ -367,13 +421,22 @@ export default function Dashboard() {
                             </p>
                           </div>
                         </div>
-                        <div className="relative text-right z-10">
-                          <p className="font-semibold text-gray-900 text-sm sm:text-base">
-                            {formatCurrency(category.totalAmount)}
-                          </p>
-                          <p className="text-xs sm:text-sm font-medium" style={{ color: category.categoryColor }}>
-                            {category.percentage || '0'}%
-                          </p>
+                        <div className="relative flex items-center space-x-2 z-10">
+                          <div className="text-right">
+                            <p className="font-semibold text-gray-900 text-sm sm:text-base">
+                              {formatCurrency(category.totalAmount)}
+                            </p>
+                            <p className="text-xs sm:text-sm font-medium" style={{ color: category.categoryColor }}>
+                              {category.percentage || '0'}%
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteCategory(category.categoryId, category.categoryName)}
+                            className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                            title={`Delete ${category.categoryName} category`}
+                          >
+                            <Trash2 size={16} />
+                          </button>
                         </div>
                       </div>
                     );
@@ -435,9 +498,18 @@ export default function Dashboard() {
                         </p>
                       </div>
                     </div>
-                    <p className="font-semibold text-gray-900 text-sm sm:text-base ml-2 flex-shrink-0">
-                      {formatCurrency(expense.amount)}
-                    </p>
+                    <div className="flex items-center space-x-2 ml-2 flex-shrink-0">
+                      <p className="font-semibold text-gray-900 text-sm sm:text-base">
+                        {formatCurrency(expense.amount)}
+                      </p>
+                      <button
+                        onClick={() => handleDeleteExpense(expense._id, expense.description)}
+                        className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                        title={`Delete ${expense.description}`}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -474,6 +546,53 @@ export default function Dashboard() {
       </main>
 
       <ExpenseForm onExpenseAdded={() => fetchDashboardData(currentPage, categoryPeriod, selectedDate)} />
+      
+      {/* Delete Confirmation Popup */}
+      {deleteConfirmation.isOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-900">Confirm Delete</h2>
+              <button
+                onClick={cancelDelete}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="mb-6">
+              <p className="text-gray-600">
+                Are you sure you want to delete{' '}
+                <span className="font-medium">
+                  {deleteConfirmation.type === 'expense' ? 'expense' : 'category'} "{deleteConfirmation.name}"
+                </span>
+                ?
+              </p>
+              {deleteConfirmation.type === 'category' && (
+                <p className="text-sm text-amber-600 mt-2">
+                  Warning: This will also delete all expenses in this category.
+                </p>
+              )}
+            </div>
+            
+            <div className="flex space-x-3">
+              <button
+                onClick={cancelDelete}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

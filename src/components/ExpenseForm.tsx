@@ -21,6 +21,7 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
   const [showNewCategory, setShowNewCategory] = useState(false);
   const [formData, setFormData] = useState({
     amount: '',
+    description: '',
   });
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [isLoading, setIsLoading] = useState(false);
@@ -57,11 +58,20 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
         const newCategory = await response.json();
         setCategories([...categories, newCategory]);
         setSelectedCategory(newCategory._id);
+        setFormData(prev => ({ ...prev, description: newCategory.name }));
         setNewCategoryName('');
         setShowNewCategory(false);
       }
     } catch (error) {
       console.error('Error creating category:', error);
+    }
+  };
+
+  const handleCategorySelect = (categoryId: string) => {
+    setSelectedCategory(categoryId);
+    const selectedCat = categories.find(cat => cat._id === categoryId);
+    if (selectedCat) {
+      setFormData(prev => ({ ...prev, description: selectedCat.name }));
     }
   };
 
@@ -76,13 +86,14 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           amount: formData.amount,
+          description: formData.description || categories.find(cat => cat._id === selectedCategory)?.name || 'Expense',
           categoryId: selectedCategory,
           date: selectedDate.toISOString(),
         }),
       });
 
       if (response.ok) {
-        setFormData({ amount: '' });
+        setFormData({ amount: '', description: '' });
         setSelectedCategory('');
         setIsOpen(false);
         onExpenseAdded();
@@ -124,7 +135,7 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
               required
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-base"
               value={formData.amount}
-              onChange={(e) => setFormData({ amount: e.target.value })}
+              onChange={(e) => setFormData(prev => ({ ...prev, amount: e.target.value }))}
             />
           </div>
 
@@ -135,7 +146,7 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
                 <button
                   key={category._id}
                   type="button"
-                  onClick={() => setSelectedCategory(category._id)}
+                  onClick={() => handleCategorySelect(category._id)}
                   className={`px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
                     selectedCategory === category._id
                       ? 'bg-blue-600 text-white'
@@ -187,6 +198,17 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
                 </div>
               </div>
             )}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <input
+              type="text"
+              placeholder="Enter description (auto-filled from category)"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-base"
+              value={formData.description}
+              onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+            />
           </div>
 
           <div>
