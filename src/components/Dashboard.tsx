@@ -65,6 +65,22 @@ export default function Dashboard() {
   });
   const router = useRouter();
 
+  // Helper function to get current date in user's timezone
+  const getCurrentDateInUserTimezone = () => {
+    if (!userSettings?.timezone) return new Date();
+    
+    const now = new Date();
+    // Get the current time in user's timezone
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: userSettings.timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+    const userDateString = formatter.format(now);
+    return new Date(userDateString);
+  };
+
   // Fetch user settings only once on component mount and when page regains focus
   useEffect(() => {
     fetchUserSettings();
@@ -78,9 +94,12 @@ export default function Dashboard() {
     return () => window.removeEventListener('focus', handleFocus);
   }, []);
 
-  // Fetch dashboard data when filters change
+
+  // Fetch dashboard data when filters change (only after user settings are loaded)
   useEffect(() => {
-    fetchDashboardData(1, categoryPeriod, selectedDate);
+    if (userSettings?.timezone) {
+      fetchDashboardData(1, categoryPeriod, selectedDate);
+    }
   }, [categoryPeriod, selectedDate]);
 
   const handlePageChange = (newPage: number) => {
@@ -178,6 +197,22 @@ export default function Dashboard() {
         const settings = await response.json();
         console.log('Fetched user settings:', settings);
         setUserSettings(settings);
+        
+        // Initialize with correct date in user's timezone
+        if (settings.timezone) {
+          const formatter = new Intl.DateTimeFormat('en-CA', {
+            timeZone: settings.timezone,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+          });
+          const userDateString = formatter.format(new Date());
+          const currentDateInUserTZ = new Date(userDateString);
+          setSelectedDate(currentDateInUserTZ);
+          
+          // Fetch initial data with correct date
+          fetchDashboardData(1, categoryPeriod, currentDateInUserTZ);
+        }
       } else {
         console.error('Failed to fetch user settings, status:', response.status);
         const errorText = await response.text();
@@ -362,7 +397,11 @@ export default function Dashboard() {
                 </div>
                 <div className="flex items-center space-x-2">
                   <button
-                    onClick={() => handleDateChange(new Date(selectedDate.getTime() - 24 * 60 * 60 * 1000))}
+                    onClick={() => {
+                      const prevDay = new Date(selectedDate);
+                      prevDay.setDate(prevDay.getDate() - 1);
+                      handleDateChange(prevDay);
+                    }}
                     className="p-1 rounded-md bg-gray-200 text-gray-700 hover:bg-gray-300"
                     title="Previous Day"
                   >
@@ -375,15 +414,19 @@ export default function Dashboard() {
                     className="px-2 sm:px-3 py-1 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <button
-                    onClick={() => handleDateChange(new Date(selectedDate.getTime() + 24 * 60 * 60 * 1000))}
+                    onClick={() => {
+                      const nextDay = new Date(selectedDate);
+                      nextDay.setDate(nextDay.getDate() + 1);
+                      handleDateChange(nextDay);
+                    }}
                     className="p-1 rounded-md bg-gray-200 text-gray-700 hover:bg-gray-300"
                     title="Next Day"
-                    disabled={selectedDate >= new Date(new Date().setHours(0,0,0,0))}
+                    disabled={selectedDate >= getCurrentDateInUserTimezone()}
                   >
                     <ChevronRight size={16} />
                   </button>
                   <button
-                    onClick={() => handleDateChange(new Date())}
+                    onClick={() => handleDateChange(getCurrentDateInUserTimezone())}
                     className="px-2 sm:px-3 py-1 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 text-sm"
                   >
                     Today

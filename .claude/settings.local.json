@@ -6,7 +6,8 @@
       "Bash(npx tsc:*)",
       "Bash(npm install:*)",
       "Bash(rm:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(npm cache clean:*)"
     ],
     "deny": []
   }

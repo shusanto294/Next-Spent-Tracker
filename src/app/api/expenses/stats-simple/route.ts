@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import connectDB from '@/lib/mongodb';
 import Expense from '@/models/Expense';
 import Category from '@/models/Category';
+import User from '@/models/User';
 import { getUserFromRequest } from '@/middleware/auth';
 import mongoose from 'mongoose';
 
@@ -19,6 +20,24 @@ export async function GET(req: NextRequest) {
     await connectDB();
     console.log('DB connected');
 
+    // Get user's timezone from database
+    let userObjectId;
+    try {
+      userObjectId = new mongoose.Types.ObjectId(user.userId);
+    } catch (error) {
+      console.error('Error converting userId to ObjectId:', error);
+    }
+    
+    const userDoc = await User.findOne({
+      $or: [
+        { _id: userObjectId },
+        { _id: user.userId }
+      ]
+    }).select('timezone');
+    
+    const userTimezone = userDoc?.timezone || 'America/New_York';
+    console.log('User timezone:', userTimezone);
+
     // Get URL parameters
     const { searchParams } = new URL(req.url);
     const period = searchParams.get('period') || 'daily';
@@ -27,35 +46,63 @@ export async function GET(req: NextRequest) {
     const dateParam = searchParams.get('date');
     const skip = (page - 1) * limit;
 
-    console.log('Parameters:', { period, page, limit, dateParam });
+    console.log('Parameters:', { period, page, limit, dateParam, userTimezone });
 
-    // Parse the selected date or use today
+    // Helper function to get date in user's timezone
+    const getDateInTimezone = (date: Date, timezone: string) => {
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      });
+      const dateString = formatter.format(date);
+      return new Date(dateString);
+    };
+
+    // Helper function to get start of day in user's timezone  
+    const getStartOfDayInTimezone = (date: Date, timezone: string) => {
+      const localDate = getDateInTimezone(date, timezone);
+      return new Date(localDate.getFullYear(), localDate.getMonth(), localDate.getDate());
+    };
+
+    // Helper function to get end of day in user's timezone
+    const getEndOfDayInTimezone = (date: Date, timezone: string) => {
+      const startOfDay = getStartOfDayInTimezone(date, timezone);
+      return new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
+    };
+
+    // Parse the selected date or use today in user's timezone
     const selectedDate = dateParam ? new Date(dateParam) : new Date();
-    const today = new Date();
+    const todayInUserTZ = getDateInTimezone(new Date(), userTimezone);
     
-    // Calculate date ranges based on selected date and period
-    const startOfSelectedDay = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
-    const endOfSelectedDay = new Date(startOfSelectedDay.getTime() + 24 * 60 * 60 * 1000);
+    // Calculate date ranges based on selected date and period in user's timezone
+    const startOfSelectedDay = getStartOfDayInTimezone(selectedDate, userTimezone);
+    const endOfSelectedDay = getEndOfDayInTimezone(selectedDate, userTimezone);
     
-    // For today's totals (always use current date)
-    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const startOfThisMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    // For today's totals (always use current date in user's timezone)
+    const startOfToday = getStartOfDayInTimezone(todayInUserTZ, userTimezone);
+    const startOfThisMonth = new Date(todayInUserTZ.getFullYear(), todayInUserTZ.getMonth(), 1);
 
-    // For weekly calculation - get start of week containing selected date (Sunday)
-    const startOfSelectedWeek = new Date(selectedDate);
-    startOfSelectedWeek.setDate(selectedDate.getDate() - selectedDate.getDay());
+    // For weekly calculation - get start of week containing selected date (Sunday) in user's timezone
+    const selectedDateInUserTZ = getDateInTimezone(selectedDate, userTimezone);
+    const startOfSelectedWeek = new Date(selectedDateInUserTZ);
+    startOfSelectedWeek.setDate(selectedDateInUserTZ.getDate() - selectedDateInUserTZ.getDay());
     startOfSelectedWeek.setHours(0, 0, 0, 0);
     const endOfSelectedWeek = new Date(startOfSelectedWeek.getTime() + 7 * 24 * 60 * 60 * 1000);
 
-    // For monthly calculation - get start of month containing selected date
-    const startOfSelectedMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
-    const endOfSelectedMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 1);
+    // For monthly calculation - get start of month containing selected date in user's timezone
+    const startOfSelectedMonth = new Date(selectedDateInUserTZ.getFullYear(), selectedDateInUserTZ.getMonth(), 1);
+    const endOfSelectedMonth = new Date(selectedDateInUserTZ.getFullYear(), selectedDateInUserTZ.getMonth() + 1, 1);
 
     console.log('Date ranges:', {
       selectedDate: selectedDate.toISOString(),
+      todayInUserTZ: todayInUserTZ.toISOString(),
       startOfSelectedDay: startOfSelectedDay.toISOString(),
+      startOfToday: startOfToday.toISOString(),
       startOfSelectedWeek: startOfSelectedWeek.toISOString(),
-      startOfSelectedMonth: startOfSelectedMonth.toISOString()
+      startOfSelectedMonth: startOfSelectedMonth.toISOString(),
+      userTimezone
     });
 
     // Simple approach - just get expenses with string userId first
