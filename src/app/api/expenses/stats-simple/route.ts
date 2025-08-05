@@ -44,9 +44,10 @@ export async function GET(req: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1');
     const limit = parseInt(searchParams.get('limit') || '10');
     const dateParam = searchParams.get('date');
+    const categoryIdParam = searchParams.get('categoryId');
     const skip = (page - 1) * limit;
 
-    console.log('Parameters:', { period, page, limit, dateParam, userTimezone });
+    console.log('Parameters:', { period, page, limit, dateParam, categoryIdParam, userTimezone });
 
     // Helper function to get date in user's timezone
     const getDateInTimezone = (date: Date, timezone: string) => {
@@ -106,16 +107,22 @@ export async function GET(req: NextRequest) {
     });
 
     // Simple approach - just get expenses with string userId first
-    console.log('Fetching expenses with userId:', user.userId);
+    console.log('Fetching expenses with userId:', user.userId, 'categoryId:', categoryIdParam);
+    
+    // Build query filter
+    const expenseFilter: any = { userId: user.userId };
+    if (categoryIdParam) {
+      expenseFilter.categoryId = categoryIdParam;
+    }
     
     // Get recent expenses with pagination (latest first)
-    const recentExpenses = await Expense.find({ userId: user.userId })
+    const recentExpenses = await Expense.find(expenseFilter)
       .sort({ date: -1 })
       .skip(skip)
       .limit(limit);
     
     // Get total count for pagination
-    const totalExpenses = await Expense.countDocuments({ userId: user.userId });
+    const totalExpenses = await Expense.countDocuments(expenseFilter);
     const totalPages = Math.ceil(totalExpenses / limit);
     
     console.log('Found recent expenses:', recentExpenses.length);

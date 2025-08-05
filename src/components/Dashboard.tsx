@@ -52,6 +52,7 @@ export default function Dashboard() {
   const [currentPage, setCurrentPage] = useState(1);
   const [categoryPeriod, setCategoryPeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily');
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState<{
     isOpen: boolean;
     type: 'expense' | 'category' | null;
@@ -95,35 +96,37 @@ export default function Dashboard() {
   }, []);
 
 
-  // Fetch dashboard data when filters change (only after user settings are loaded)
+  // Fetch dashboard data when date changes (only after user settings are loaded)
   useEffect(() => {
     if (userSettings?.timezone) {
-      fetchDashboardData(1, categoryPeriod, selectedDate);
+      fetchDashboardData(1, categoryPeriod, selectedDate, selectedCategoryId);
     }
-  }, [categoryPeriod, selectedDate]);
+  }, [selectedDate]);
 
   const handlePageChange = (newPage: number) => {
-    fetchDashboardData(newPage, categoryPeriod, selectedDate);
+    fetchDashboardData(newPage, categoryPeriod, selectedDate, selectedCategoryId);
   };
 
   const handlePeriodChange = (newPeriod: 'daily' | 'weekly' | 'monthly') => {
     setCategoryPeriod(newPeriod);
-    fetchDashboardData(1, newPeriod, selectedDate);
+    fetchDashboardData(1, newPeriod, selectedDate, selectedCategoryId);
   };
 
   const handleDateChange = (newDate: Date) => {
     setSelectedDate(newDate);
-    fetchDashboardData(1, categoryPeriod, newDate);
+    // The useEffect will handle the refetch when selectedDate changes
   };
 
   const handleWeekView = () => {
-    setCategoryPeriod('weekly');
-    fetchDashboardData(1, 'weekly', selectedDate);
+    const newPeriod = 'weekly';
+    setCategoryPeriod(newPeriod);
+    fetchDashboardData(1, newPeriod, selectedDate, selectedCategoryId);
   };
 
   const handleMonthView = () => {
-    setCategoryPeriod('monthly');
-    fetchDashboardData(1, 'monthly', selectedDate);
+    const newPeriod = 'monthly';
+    setCategoryPeriod(newPeriod);
+    fetchDashboardData(1, newPeriod, selectedDate, selectedCategoryId);
   };
 
   const formatDateForInput = (date: Date) => {
@@ -132,9 +135,9 @@ export default function Dashboard() {
 
 
 
-  const fetchDashboardData = async (page = 1, period = categoryPeriod, date = selectedDate) => {
+  const fetchDashboardData = async (page = 1, period = categoryPeriod, date = selectedDate, categoryId = selectedCategoryId) => {
     try {
-      console.log('Fetching dashboard data with:', { page, period, date: date.toISOString().split('T')[0] });
+      console.log('Fetching dashboard data with:', { page, period, date: date.toISOString().split('T')[0], categoryId });
       
       const params = new URLSearchParams({
         page: page.toString(),
@@ -142,6 +145,11 @@ export default function Dashboard() {
         period,
         date: date.toISOString().split('T')[0] // Send date as YYYY-MM-DD
       });
+      
+      // Add category filter if selected
+      if (categoryId) {
+        params.append('categoryId', categoryId);
+      }
       
       const url = `/api/expenses/stats-simple?${params}`;
       console.log('Fetching from URL:', url);
@@ -176,6 +184,17 @@ export default function Dashboard() {
         setData(responseData);
         setCurrentPage(page);
         setCategoryPeriod(period);
+        
+        // Check if the currently selected category still exists in the new data
+        if (selectedCategoryId && responseData.categoryStats) {
+          const categoryStillExists = responseData.categoryStats.some(
+            (cat: CategoryStat) => cat.categoryId === selectedCategoryId
+          );
+          // Only reset if the category no longer exists in the new period
+          if (!categoryStillExists) {
+            setSelectedCategoryId(null);
+          }
+        }
       } else {
         console.error('API response not ok:', response.status, response.statusText);
         console.error('Error details:', responseData);
@@ -211,7 +230,7 @@ export default function Dashboard() {
           setSelectedDate(currentDateInUserTZ);
           
           // Fetch initial data with correct date
-          fetchDashboardData(1, categoryPeriod, currentDateInUserTZ);
+          fetchDashboardData(1, categoryPeriod, currentDateInUserTZ, selectedCategoryId);
         }
       } else {
         console.error('Failed to fetch user settings, status:', response.status);
@@ -273,7 +292,7 @@ export default function Dashboard() {
       
       if (response.ok) {
         setDeleteConfirmation({ isOpen: false, type: null, id: null, name: '' });
-        fetchDashboardData(currentPage, categoryPeriod, selectedDate);
+        fetchDashboardData(currentPage, categoryPeriod, selectedDate, selectedCategoryId);
       } else {
         console.error('Delete failed:', response.statusText);
       }
@@ -284,6 +303,13 @@ export default function Dashboard() {
 
   const cancelDelete = () => {
     setDeleteConfirmation({ isOpen: false, type: null, id: null, name: '' });
+  };
+
+  const handleCategoryFilter = (categoryId: string) => {
+    const newCategoryId = selectedCategoryId === categoryId ? null : categoryId;
+    setSelectedCategoryId(newCategoryId);
+    // Refetch data with the new category filter
+    fetchDashboardData(1, categoryPeriod, selectedDate, newCategoryId);
   };
 
   if (isLoading) {
@@ -466,7 +492,14 @@ export default function Dashboard() {
                             style={{ backgroundColor: category.categoryColor }}
                           ></div>
                           <div>
-                            <h3 className="font-medium text-gray-900 text-sm sm:text-base">
+                            <h3 
+                              className={`font-medium text-sm sm:text-base cursor-pointer hover:underline ${
+                                selectedCategoryId === category.categoryId 
+                                  ? 'text-blue-600' 
+                                  : 'text-gray-900'
+                              }`}
+                              onClick={() => handleCategoryFilter(category.categoryId)}
+                            >
                               {category.categoryName}
                             </h3>
                             <p className="text-xs sm:text-sm text-gray-500">
@@ -519,19 +552,41 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {data?.recent && data.recent.expenses && data.recent.expenses.length > 0 && (
-          <div className="mt-6 sm:mt-8 bg-white rounded-lg shadow">
-            <div className="px-4 sm:px-6 py-4 border-b border-gray-200 flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-2 sm:space-y-0">
-              <h2 className="text-base sm:text-lg font-semibold text-gray-900">
-                Recent Spent
-              </h2>
-              <div className="text-sm text-gray-500">
-                Showing {data.recent.expenses.length} of {data.recent.pagination.totalItems} expenses
+        {data?.recent && data.recent.expenses && data.recent.expenses.length > 0 && (() => {
+          // Backend now handles filtering, so just use all returned expenses
+          const filteredExpenses = data.recent.expenses;
+          
+          const selectedCategoryName = selectedCategoryId 
+            ? data.categoryStats?.find(cat => cat.categoryId === selectedCategoryId)?.categoryName 
+            : null;
+
+          return (
+            <div className="mt-6 sm:mt-8 bg-white rounded-lg shadow">
+              <div className="px-4 sm:px-6 py-4 border-b border-gray-200 flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-2 sm:space-y-0">
+                <div>
+                  <h2 className="text-base sm:text-lg font-semibold text-gray-900">
+                    Recent Spent
+                    {selectedCategoryName && (
+                      <span className="text-blue-600"> - {selectedCategoryName}</span>
+                    )}
+                  </h2>
+                  {selectedCategoryId && (
+                    <button
+                      onClick={() => setSelectedCategoryId(null)}
+                      className="text-sm text-blue-600 hover:text-blue-800 underline mt-1"
+                    >
+                      Show all transactions
+                    </button>
+                  )}
+                </div>
+                <div className="text-sm text-gray-500">
+                  Showing {filteredExpenses.length} of {data.recent.pagination.totalItems} expenses
+                </div>
               </div>
-            </div>
-            <div className="p-4 sm:p-6">
-              <div className="space-y-3">
-                {data.recent.expenses.map((expense: any) => (
+              <div className="p-4 sm:p-6">
+                {filteredExpenses.length > 0 ? (
+                  <div className="space-y-3">
+                    {filteredExpenses.map((expense: any) => (
                   <div
                     key={expense._id}
                     className="flex items-center justify-between p-3 rounded-lg bg-gray-50"
@@ -563,42 +618,56 @@ export default function Dashboard() {
                         <Trash2 size={16} />
                       </button>
                     </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
+                ) : (
+                  <div className="text-center py-8">
+                    <p className="text-gray-500">
+                      No transactions found for {selectedCategoryName}
+                    </p>
+                    <button
+                      onClick={() => setSelectedCategoryId(null)}
+                      className="text-sm text-blue-600 hover:text-blue-800 underline mt-2"
+                    >
+                      Show all transactions
+                    </button>
+                  </div>
+                )}
+                
+                {/* Pagination - only show if not filtering and has multiple pages */}
+                {!selectedCategoryId && data.recent.pagination.totalPages > 1 && (
+                  <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between border-t pt-4 space-y-4 sm:space-y-0">
+                    <div className="text-sm text-gray-500 text-center sm:text-left">
+                      Page {data.recent.pagination.currentPage} of {data.recent.pagination.totalPages}
+                    </div>
+                    <div className="flex justify-center sm:justify-end space-x-2">
+                      <button
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={!data.recent.pagination.hasPrevPage}
+                        className="flex items-center px-3 py-2 text-sm bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <ChevronLeft size={16} className="mr-1" />
+                        <span className="hidden sm:inline">Previous</span>
+                      </button>
+                      <button
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={!data.recent.pagination.hasNextPage}
+                        className="flex items-center px-3 py-2 text-sm bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <span className="hidden sm:inline">Next</span>
+                        <ChevronRight size={16} className="ml-1" />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
-              
-              {/* Pagination */}
-              {data.recent.pagination.totalPages > 1 && (
-                <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between border-t pt-4 space-y-4 sm:space-y-0">
-                  <div className="text-sm text-gray-500 text-center sm:text-left">
-                    Page {data.recent.pagination.currentPage} of {data.recent.pagination.totalPages}
-                  </div>
-                  <div className="flex justify-center sm:justify-end space-x-2">
-                    <button
-                      onClick={() => handlePageChange(currentPage - 1)}
-                      disabled={!data.recent.pagination.hasPrevPage}
-                      className="flex items-center px-3 py-2 text-sm bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <ChevronLeft size={16} className="mr-1" />
-                      <span className="hidden sm:inline">Previous</span>
-                    </button>
-                    <button
-                      onClick={() => handlePageChange(currentPage + 1)}
-                      disabled={!data.recent.pagination.hasNextPage}
-                      className="flex items-center px-3 py-2 text-sm bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <span className="hidden sm:inline">Next</span>
-                      <ChevronRight size={16} className="ml-1" />
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
       </main>
 
-      <ExpenseForm onExpenseAdded={() => fetchDashboardData(currentPage, categoryPeriod, selectedDate)} />
+      <ExpenseForm onExpenseAdded={() => fetchDashboardData(currentPage, categoryPeriod, selectedDate, selectedCategoryId)} />
       
       {/* Delete Confirmation Popup */}
       {deleteConfirmation.isOpen && (
