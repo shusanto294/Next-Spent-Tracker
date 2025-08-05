@@ -96,20 +96,20 @@ export default function Dashboard() {
   }, []);
 
 
-  // Fetch dashboard data when date changes (only after user settings are loaded)
+  // Fetch dashboard data when date changes or when user settings are loaded
   useEffect(() => {
     if (userSettings?.timezone) {
-      fetchDashboardData(1, categoryPeriod, selectedDate, selectedCategoryId);
+      fetchDashboardData(1, categoryPeriod, selectedDate, selectedCategoryId, 'INITIAL_LOAD_OR_DATE_CHANGED - useEffect triggered');
     }
-  }, [selectedDate]);
+  }, [selectedDate, userSettings]);
 
   const handlePageChange = (newPage: number) => {
-    fetchDashboardData(newPage, categoryPeriod, selectedDate, selectedCategoryId);
+    fetchDashboardData(newPage, categoryPeriod, selectedDate, selectedCategoryId, `PAGINATION - User clicked page ${newPage}`);
   };
 
   const handlePeriodChange = (newPeriod: 'daily' | 'weekly' | 'monthly') => {
     setCategoryPeriod(newPeriod);
-    fetchDashboardData(1, newPeriod, selectedDate, selectedCategoryId);
+    fetchDashboardData(1, newPeriod, selectedDate, selectedCategoryId, `PERIOD_CHANGED - User selected ${newPeriod} view`);
   };
 
   const handleDateChange = (newDate: Date) => {
@@ -120,13 +120,13 @@ export default function Dashboard() {
   const handleWeekView = () => {
     const newPeriod = 'weekly';
     setCategoryPeriod(newPeriod);
-    fetchDashboardData(1, newPeriod, selectedDate, selectedCategoryId);
+    fetchDashboardData(1, newPeriod, selectedDate, selectedCategoryId, 'WEEK_VIEW - User clicked This Week button');
   };
 
   const handleMonthView = () => {
     const newPeriod = 'monthly';
     setCategoryPeriod(newPeriod);
-    fetchDashboardData(1, newPeriod, selectedDate, selectedCategoryId);
+    fetchDashboardData(1, newPeriod, selectedDate, selectedCategoryId, 'MONTH_VIEW - User clicked This Month button');
   };
 
   const formatDateForInput = (date: Date) => {
@@ -135,9 +135,11 @@ export default function Dashboard() {
 
 
 
-  const fetchDashboardData = async (page = 1, period = categoryPeriod, date = selectedDate, categoryId = selectedCategoryId) => {
+  const fetchDashboardData = async (page = 1, period = categoryPeriod, date = selectedDate, categoryId = selectedCategoryId, reason = 'unknown') => {
     try {
-      console.log('Fetching dashboard data with:', { page, period, date: date.toISOString().split('T')[0], categoryId });
+      console.log('🔄 FETCHING DATA FROM DATABASE');
+      console.log('📍 REASON:', reason);
+      console.log('📊 Parameters:', { page, period, date: date.toISOString().split('T')[0], categoryId });
       
       const params = new URLSearchParams({
         page: page.toString(),
@@ -152,7 +154,6 @@ export default function Dashboard() {
       }
       
       const url = `/api/expenses/stats-simple?${params}`;
-      console.log('Fetching from URL:', url);
       
       const response = await fetch(url);
       if (response.status === 401) {
@@ -161,26 +162,8 @@ export default function Dashboard() {
       }
       
       const responseData = await response.json();
-      console.log('Raw API response:', responseData);
       
       if (response.ok) {
-        console.log('Dashboard data details:', {
-          categoryStats: {
-            length: responseData.categoryStats?.length || 0,
-            sample: responseData.categoryStats?.[0],
-            hasData: Boolean(responseData.categoryStats?.length),
-          },
-          daily: {
-            total: responseData.daily?.total,
-            expensesCount: responseData.daily?.expenses?.length,
-          },
-          monthly: {
-            total: responseData.monthly?.total,
-            expensesCount: responseData.monthly?.expenses?.length,
-          },
-          period: responseData.period,
-        });
-        
         setData(responseData);
         setCurrentPage(page);
         setCategoryPeriod(period);
@@ -196,8 +179,7 @@ export default function Dashboard() {
           }
         }
       } else {
-        console.error('API response not ok:', response.status, response.statusText);
-        console.error('Error details:', responseData);
+        console.error('API Error:', response.status, response.statusText);
       }
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -208,13 +190,10 @@ export default function Dashboard() {
 
   const fetchUserSettings = async () => {
     try {
-      console.log('Fetching user settings...');
       const response = await fetch('/api/user/settings');
-      console.log('Settings response status:', response.status);
       
       if (response.ok) {
         const settings = await response.json();
-        console.log('Fetched user settings:', settings);
         setUserSettings(settings);
         
         // Initialize with correct date in user's timezone
@@ -229,13 +208,10 @@ export default function Dashboard() {
           const currentDateInUserTZ = new Date(userDateString);
           setSelectedDate(currentDateInUserTZ);
           
-          // Fetch initial data with correct date
-          fetchDashboardData(1, categoryPeriod, currentDateInUserTZ, selectedCategoryId);
+          // Don't fetch here - let the useEffect handle it when selectedDate changes
         }
       } else {
-        console.error('Failed to fetch user settings, status:', response.status);
-        const errorText = await response.text();
-        console.error('Error response:', errorText);
+        console.error('Failed to fetch user settings:', response.status);
       }
     } catch (error) {
       console.error('Error fetching user settings:', error);
@@ -252,14 +228,10 @@ export default function Dashboard() {
   };
 
   const formatCurrency = (amount: number) => {
-    console.log('formatCurrency called with amount:', amount, 'userSettings:', userSettings);
     if (!userSettings) {
-      console.log('No user settings, using default $');
       return `$${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
-    const formatted = `${userSettings.currencySymbol}${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    console.log('Formatted currency:', formatted);
-    return formatted;
+    return `${userSettings.currencySymbol}${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   const handleDeleteExpense = async (expenseId: string, description: string) => {
@@ -292,7 +264,7 @@ export default function Dashboard() {
       
       if (response.ok) {
         setDeleteConfirmation({ isOpen: false, type: null, id: null, name: '' });
-        fetchDashboardData(currentPage, categoryPeriod, selectedDate, selectedCategoryId);
+        fetchDashboardData(currentPage, categoryPeriod, selectedDate, selectedCategoryId, `DELETE_CONFIRMED - Refreshing after deleting ${deleteConfirmation.type}: ${deleteConfirmation.name}`);
       } else {
         console.error('Delete failed:', response.statusText);
       }
@@ -307,9 +279,13 @@ export default function Dashboard() {
 
   const handleCategoryFilter = (categoryId: string) => {
     const newCategoryId = selectedCategoryId === categoryId ? null : categoryId;
+    const categoryName = data?.categoryStats?.find(cat => cat.categoryId === categoryId)?.categoryName || 'Unknown';
     setSelectedCategoryId(newCategoryId);
     // Refetch data with the new category filter
-    fetchDashboardData(1, categoryPeriod, selectedDate, newCategoryId);
+    const reason = newCategoryId 
+      ? `CATEGORY_FILTER - User selected category: ${categoryName} (${categoryId})`
+      : `CLEAR_FILTER - User cleared category filter`;
+    fetchDashboardData(1, categoryPeriod, selectedDate, newCategoryId, reason);
   };
 
   if (isLoading) {
@@ -572,7 +548,10 @@ export default function Dashboard() {
                   </h2>
                   {selectedCategoryId && (
                     <button
-                      onClick={() => setSelectedCategoryId(null)}
+                      onClick={() => {
+                        setSelectedCategoryId(null);
+                        fetchDashboardData(1, categoryPeriod, selectedDate, null, 'CLEAR_FILTER - User clicked Show all transactions');
+                      }}
                       className="text-sm text-blue-600 hover:text-blue-800 underline mt-1"
                     >
                       Show all transactions
@@ -627,7 +606,10 @@ export default function Dashboard() {
                       No transactions found for {selectedCategoryName}
                     </p>
                     <button
-                      onClick={() => setSelectedCategoryId(null)}
+                      onClick={() => {
+                        setSelectedCategoryId(null);
+                        fetchDashboardData(1, categoryPeriod, selectedDate, null, 'CLEAR_FILTER - User clicked Show all transactions (no results)');
+                      }}
                       className="text-sm text-blue-600 hover:text-blue-800 underline mt-2"
                     >
                       Show all transactions
@@ -667,7 +649,7 @@ export default function Dashboard() {
         })()}
       </main>
 
-      <ExpenseForm onExpenseAdded={() => fetchDashboardData(currentPage, categoryPeriod, selectedDate, selectedCategoryId)} />
+      <ExpenseForm onExpenseAdded={() => fetchDashboardData(currentPage, categoryPeriod, selectedDate, selectedCategoryId, 'EXPENSE_ADDED - Refreshing after new expense was added')} />
       
       {/* Delete Confirmation Popup */}
       {deleteConfirmation.isOpen && (

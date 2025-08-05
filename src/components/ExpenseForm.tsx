@@ -1,16 +1,96 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, GripVertical } from 'lucide-react';
+import {
+  DndContext, 
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import {
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface Category {
   _id: string;
   name: string;
   color: string;
+  order: number;
 }
 
 interface ExpenseFormProps {
   onExpenseAdded: () => void;
+}
+
+function SortableCategory({ 
+  category, 
+  isSelected, 
+  onSelect 
+}: { 
+  category: Category; 
+  isSelected: boolean; 
+  onSelect: (categoryId: string) => void; 
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: category._id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        ...style,
+        backgroundColor: isSelected ? category.color : undefined,
+      }}
+      className={`flex items-center gap-2 px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
+        isSelected
+          ? 'text-white'
+          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+      }`}
+      {...attributes}
+    >
+      <div 
+        {...listeners}
+        className="cursor-grab active:cursor-grabbing p-1 hover:bg-black/10 rounded"
+        title="Drag to reorder"
+      >
+        <GripVertical size={14} />
+      </div>
+      <button
+        type="button"
+        onClick={() => onSelect(category._id)}
+        className={`flex-1 text-left border-none outline-none ${isSelected ? 'text-white' : ''}`}
+        style={{
+          border: 'none',
+          outline: 'none',
+        }}
+      >
+        {category.name}
+      </button>
+    </div>
+  );
 }
 
 export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
@@ -26,6 +106,13 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [isLoading, setIsLoading] = useState(false);
 
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
   useEffect(() => {
     if (isOpen) {
       fetchCategories();
@@ -37,6 +124,7 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
       const response = await fetch('/api/categories');
       if (response.ok) {
         const data = await response.json();
+        console.log('📦 Fetched categories with order:', data.map((cat: Category) => ({ name: cat.name, order: cat.order })));
         setCategories(data);
       }
     } catch (error) {
@@ -56,7 +144,8 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
 
       if (response.ok) {
         const newCategory = await response.json();
-        setCategories([...categories, newCategory]);
+        // Refetch categories to get them in proper order
+        await fetchCategories();
         setSelectedCategory(newCategory._id);
         setFormData(prev => ({ ...prev, description: newCategory.name }));
         setNewCategoryName('');
@@ -72,6 +161,47 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
     const selectedCat = categories.find(cat => cat._id === categoryId);
     if (selectedCat) {
       setFormData(prev => ({ ...prev, description: selectedCat.name }));
+    }
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+
+    if (active.id !== over?.id) {
+      setCategories((items) => {
+        const oldIndex = items.findIndex((item) => item._id === active.id);
+        const newIndex = items.findIndex((item) => item._id === over?.id);
+
+        const newItems = arrayMove(items, oldIndex, newIndex);
+        
+        // Update order in database
+        updateCategoryOrder(newItems);
+        
+        return newItems;
+      });
+    }
+  };
+
+  const updateCategoryOrder = async (reorderedCategories: Category[]) => {
+    try {
+      const categoryOrders = reorderedCategories.map((category, index) => ({
+        categoryId: category._id,
+        order: index,
+      }));
+
+      const response = await fetch('/api/categories/reorder', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categoryOrders }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Error updating category order:', response.status, errorData);
+        throw new Error(`Failed to update category order: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('Error updating category order:', error);
     }
   };
 
@@ -140,33 +270,38 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Category</label>
-            <div className="flex flex-wrap gap-2 mb-2">
-              {categories.map((category) => (
-                <button
-                  key={category._id}
-                  type="button"
-                  onClick={() => handleCategorySelect(category._id)}
-                  className={`px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-colors ${
-                    selectedCategory === category._id
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                  style={{
-                    backgroundColor: selectedCategory === category._id ? category.color : undefined,
-                  }}
-                >
-                  {category.name}
-                </button>
-              ))}
-              <button
-                type="button"
-                onClick={() => setShowNewCategory(true)}
-                className="px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium bg-green-100 text-green-700 hover:bg-green-200"
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Category
+              <span className="text-xs text-gray-500 ml-2">(drag to reorder)</span>
+            </label>
+            <DndContext 
+              sensors={sensors} 
+              collisionDetection={closestCenter} 
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext 
+                items={categories.map(cat => cat._id)} 
+                strategy={verticalListSortingStrategy}
               >
-                + New Category
-              </button>
-            </div>
+                <div className="flex flex-col gap-2 mb-2">
+                  {categories.map((category) => (
+                    <SortableCategory
+                      key={category._id}
+                      category={category}
+                      isSelected={selectedCategory === category._id}
+                      onSelect={handleCategorySelect}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+            <button
+              type="button"
+              onClick={() => setShowNewCategory(true)}
+              className="w-full px-2 sm:px-3 py-2 rounded-lg text-xs sm:text-sm font-medium bg-green-100 text-green-700 hover:bg-green-200 mt-2"
+            >
+              + New Category
+            </button>
 
             {showNewCategory && (
               <div className="flex flex-col sm:flex-row gap-2 mt-2">

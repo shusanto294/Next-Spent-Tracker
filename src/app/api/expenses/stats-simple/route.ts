@@ -8,17 +8,13 @@ import mongoose from 'mongoose';
 
 export async function GET(req: NextRequest) {
   try {
-    console.log('=== SIMPLE STATS API START ===');
-    
     const user = getUserFromRequest(req);
-    console.log('User:', user ? { userId: user.userId, email: user.email } : 'No user');
     
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     await connectDB();
-    console.log('DB connected');
 
     // Get user's timezone from database
     let userObjectId;
@@ -36,7 +32,6 @@ export async function GET(req: NextRequest) {
     }).select('timezone');
     
     const userTimezone = userDoc?.timezone || 'America/New_York';
-    console.log('User timezone:', userTimezone);
 
     // Get URL parameters
     const { searchParams } = new URL(req.url);
@@ -47,7 +42,13 @@ export async function GET(req: NextRequest) {
     const categoryIdParam = searchParams.get('categoryId');
     const skip = (page - 1) * limit;
 
-    console.log('Parameters:', { period, page, limit, dateParam, categoryIdParam, userTimezone });
+    // Only log essential fetch information
+    console.log('📊 API FETCH:', { 
+      period, 
+      page, 
+      categoryFilter: categoryIdParam ? 'YES' : 'NO',
+      date: dateParam 
+    });
 
     // Helper function to get date in user's timezone
     const getDateInTimezone = (date: Date, timezone: string) => {
@@ -96,18 +97,9 @@ export async function GET(req: NextRequest) {
     const startOfSelectedMonth = new Date(selectedDateInUserTZ.getFullYear(), selectedDateInUserTZ.getMonth(), 1);
     const endOfSelectedMonth = new Date(selectedDateInUserTZ.getFullYear(), selectedDateInUserTZ.getMonth() + 1, 1);
 
-    console.log('Date ranges:', {
-      selectedDate: selectedDate.toISOString(),
-      todayInUserTZ: todayInUserTZ.toISOString(),
-      startOfSelectedDay: startOfSelectedDay.toISOString(),
-      startOfToday: startOfToday.toISOString(),
-      startOfSelectedWeek: startOfSelectedWeek.toISOString(),
-      startOfSelectedMonth: startOfSelectedMonth.toISOString(),
-      userTimezone
-    });
+    // Remove detailed date range logging
 
-    // Simple approach - just get expenses with string userId first
-    console.log('Fetching expenses with userId:', user.userId, 'categoryId:', categoryIdParam);
+    // Remove individual database entry logging
     
     // Build query filter
     const expenseFilter: any = { userId: user.userId };
@@ -124,8 +116,6 @@ export async function GET(req: NextRequest) {
     // Get total count for pagination
     const totalExpenses = await Expense.countDocuments(expenseFilter);
     const totalPages = Math.ceil(totalExpenses / limit);
-    
-    console.log('Found recent expenses:', recentExpenses.length);
 
     // Get all expenses for calculations
     const allExpenses = await Expense.find({ userId: user.userId });
@@ -155,17 +145,15 @@ export async function GET(req: NextRequest) {
       periodExpenses = allExpenses.filter(e => e.date >= periodStart && e.date < periodEnd);
     }
 
-    console.log('Period expenses:', periodExpenses.length, 'for', period, 'period');
-    console.log('Daily total:', dailyTotal, 'Monthly total:', monthlyTotal);
+    // Remove detailed expense logging
 
     // Get categories manually for stats based on selected period
     const categoryIds = [...new Set(periodExpenses.map(e => e.categoryId).filter(Boolean))];
     let categories = [];
     try {
       categories = await Category.find({ _id: { $in: categoryIds } });
-      console.log('Found categories:', categories.length);
     } catch (catError) {
-      console.log('Error fetching categories:', catError instanceof Error ? catError.message : 'Unknown error');
+      console.error('Error fetching categories:', catError instanceof Error ? catError.message : 'Unknown error');
     }
     const categoryLookup = new Map(categories.map(c => [c._id.toString(), c]));
     
@@ -202,14 +190,7 @@ export async function GET(req: NextRequest) {
         percentage: periodTotal > 0 ? ((stat.totalAmount / periodTotal) * 100).toFixed(1) : '0'
       }));
 
-    console.log('Category stats details:', {
-      length: categoryStats.length,
-      sample: categoryStats[0],
-      periodTotal,
-      periodExpensesCount: periodExpenses.length,
-      categoryMapSize: categoryMap.size,
-      rawCategories: categories.length,
-    });
+    // Remove detailed category stats logging
 
     const response = {
       daily: {
@@ -234,7 +215,6 @@ export async function GET(req: NextRequest) {
       period: period
     };
 
-    console.log('=== SIMPLE STATS API SUCCESS ===');
     return NextResponse.json(response);
 
   } catch (error) {

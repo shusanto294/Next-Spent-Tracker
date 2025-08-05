@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
         { userId: userObjectId },
         { userId: user.userId }
       ]
-    });
+    }).sort({ order: 1, createdAt: 1 });
     
     return NextResponse.json(categories);
   } catch (error) {
@@ -75,10 +75,42 @@ export async function POST(req: NextRequest) {
     // Get random color if none provided
     const randomColor = color || defaultColors[Math.floor(Math.random() * defaultColors.length)];
 
-    const category = await Category.create({
+    // Get the highest order number for this user
+    const lastCategory = await Category.findOne({
+      $or: [
+        { userId: userObjectId },
+        { userId: user.userId }
+      ]
+    }).sort({ order: -1 });
+
+    const nextOrder = lastCategory ? lastCategory.order + 1 : 0;
+    console.log('🔍 Creating category with order:', nextOrder, 'Last category order:', lastCategory?.order);
+
+    const categoryData = {
       name,
       color: randomColor,
       userId: userObjectId || user.userId,
+      order: nextOrder,
+    };
+    
+    console.log('🔍 Category data to create:', categoryData);
+
+    const category = await Category.create(categoryData);
+
+    console.log('🔍 Created category result:', {
+      _id: category._id,
+      name: category.name,
+      order: category.order,
+      orderExists: category.order !== undefined,
+      orderType: typeof category.order
+    });
+
+    // Verify by fetching it back
+    const verifyCategory = await Category.findById(category._id);
+    console.log('🔍 Verification fetch:', {
+      order: verifyCategory?.order,
+      orderExists: verifyCategory?.order !== undefined,
+      orderType: typeof verifyCategory?.order
     });
 
     return NextResponse.json(category, { status: 201 });
