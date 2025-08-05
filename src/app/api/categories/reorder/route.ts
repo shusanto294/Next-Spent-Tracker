@@ -15,7 +15,7 @@ export async function PUT(req: NextRequest) {
     await connectDB();
 
     // Handle user ID format like other endpoints
-    let userObjectId;
+    let userObjectId: mongoose.Types.ObjectId | undefined;
     try {
       userObjectId = new mongoose.Types.ObjectId(user.userId);
     } catch (error) {
