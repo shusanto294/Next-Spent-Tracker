@@ -149,7 +149,7 @@ export async function GET(req: NextRequest) {
 
     // Get categories manually for stats based on selected period
     const categoryIds = [...new Set(periodExpenses.map(e => e.categoryId).filter(Boolean))];
-    let categories = [];
+    let categories: any[] = [];
     try {
       categories = await Category.find({ _id: { $in: categoryIds } });
     } catch (catError) {
