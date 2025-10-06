@@ -1,37 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import connectDB from '@/lib/mongodb';
-import Expense from '@/models/Expense';
-import Category from '@/models/Category';
-import User from '@/models/User';
 import { getUserFromRequest } from '@/middleware/auth';
-import mongoose from 'mongoose';
+import { adminDb } from '@/lib/firebaseAdmin';
 
 export async function GET(req: NextRequest) {
   try {
-    const user = getUserFromRequest(req);
-    
+    const user = await getUserFromRequest(req);
+
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    await connectDB();
-
     // Get user's timezone from database
-    let userObjectId;
-    try {
-      userObjectId = new mongoose.Types.ObjectId(user.userId);
-    } catch (error) {
-      console.error('Error converting userId to ObjectId:', error);
-    }
-    
-    const userDoc = await User.findOne({
-      $or: [
-        { _id: userObjectId },
-        { _id: user.userId }
-      ]
-    }).select('timezone');
-    
-    const userTimezone = userDoc?.timezone || 'America/New_York';
+    const userDoc = await adminDb.collection('users').doc(user.userId).get();
+    const userData = userDoc.data();
+    const userTimezone = userData?.timezone || 'America/New_York';
 
     // Get URL parameters
     const { searchParams } = new URL(req.url);
@@ -100,25 +82,36 @@ export async function GET(req: NextRequest) {
     // Remove detailed date range logging
 
     // Remove individual database entry logging
-    
-    // Build query filter
-    const expenseFilter: any = { userId: user.userId };
-    if (categoryIdParam) {
-      expenseFilter.categoryId = categoryIdParam;
-    }
-    
-    // Get recent expenses with pagination (latest first)
-    const recentExpenses = await Expense.find(expenseFilter)
-      .sort({ date: -1 })
-      .skip(skip)
-      .limit(limit);
-    
-    // Get total count for pagination
-    const totalExpenses = await Expense.countDocuments(expenseFilter);
-    const totalPages = Math.ceil(totalExpenses / limit);
 
-    // Get all expenses for calculations
-    const allExpenses = await Expense.find({ userId: user.userId });
+    // Get all expenses for the user
+    let expensesQuery = adminDb.collection('expenses').where('userId', '==', user.userId);
+    if (categoryIdParam) {
+      expensesQuery = expensesQuery.where('categoryId', '==', categoryIdParam);
+    }
+
+    const expensesSnapshot = await expensesQuery.get();
+    const allExpenses = expensesSnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        ...data,
+        date: data.date?.toDate?.() || data.date,
+        amount: data.amount || 0,
+        categoryId: data.categoryId
+      };
+    });
+
+    // Sort by date descending for recent expenses
+    const sortedExpenses = [...allExpenses].sort((a, b) => {
+      const dateA = a.date instanceof Date ? a.date : new Date(a.date);
+      const dateB = b.date instanceof Date ? b.date : new Date(b.date);
+      return dateB.getTime() - dateA.getTime();
+    });
+
+    // Paginate recent expenses
+    const recentExpenses = sortedExpenses.slice(skip, skip + limit);
+    const totalExpenses = categoryIdParam ? sortedExpenses.length : allExpenses.length;
+    const totalPages = Math.ceil(totalExpenses / limit);
 
     // Calculate totals for today and this month (always current date)
     const todayExpenses = allExpenses.filter(e => e.date >= startOfToday);
@@ -151,20 +144,27 @@ export async function GET(req: NextRequest) {
     const categoryIds = [...new Set(periodExpenses.map(e => e.categoryId).filter(Boolean))];
     let categories: any[] = [];
     try {
-      categories = await Category.find({ _id: { $in: categoryIds } });
+      const categoryPromises = categoryIds.map(id => adminDb.collection('categories').doc(id as string).get());
+      const categoryDocs = await Promise.all(categoryPromises);
+      categories = categoryDocs
+        .filter(doc => doc.exists)
+        .map(doc => ({
+          _id: doc.id,
+          ...doc.data()
+        }));
     } catch (catError) {
       console.error('Error fetching categories:', catError instanceof Error ? catError.message : 'Unknown error');
     }
-    const categoryLookup = new Map(categories.map(c => [c._id.toString(), c]));
+    const categoryLookup = new Map(categories.map(c => [c._id, c]));
     
     // Simple category stats - no aggregation, based on selected period
     const categoryMap = new Map();
     periodExpenses.forEach(expense => {
-      const catId = expense.categoryId?.toString() || 'uncategorized';
+      const catId = expense.categoryId || 'uncategorized';
       const category = categoryLookup.get(catId);
       const catName = category?.name || 'Uncategorized';
       const catColor = category?.color || '#3B82F6';
-      
+
       if (!categoryMap.has(catId)) {
         categoryMap.set(catId, {
           categoryId: catId,
@@ -174,7 +174,7 @@ export async function GET(req: NextRequest) {
           count: 0
         });
       }
-      
+
       const cat = categoryMap.get(catId);
       cat.totalAmount += expense.amount;
       cat.count += 1;

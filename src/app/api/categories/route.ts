@@ -1,31 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
-import connectDB from '@/lib/mongodb';
-import Category from '@/models/Category';
 import { getUserFromRequest } from '@/middleware/auth';
-import mongoose from 'mongoose';
+import { adminDb, admin } from '@/lib/firebaseAdmin';
 
 export async function GET(req: NextRequest) {
   try {
-    const user = getUserFromRequest(req);
+    const user = await getUserFromRequest(req);
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    await connectDB();
-    let userObjectId;
-    try {
-      userObjectId = new mongoose.Types.ObjectId(user.userId);
-    } catch (error) {
-      console.error('Error converting userId to ObjectId:', error);
-    }
-    
-    const categories = await Category.find({
-      $or: [
-        { userId: userObjectId },
-        { userId: user.userId }
-      ]
-    }).sort({ order: 1, createdAt: 1 });
-    
+    const categoriesSnapshot = await adminDb
+      .collection('categories')
+      .where('userId', '==', user.userId)
+      .get();
+
+    const categories = categoriesSnapshot.docs
+      .map(doc => {
+        const data = doc.data();
+        return {
+          _id: doc.id,
+          ...data,
+          createdAt: data.createdAt?.toDate?.() || data.createdAt
+        };
+      })
+      .sort((a: any, b: any) => {
+        // Sort by order first, then by createdAt
+        if (a.order !== b.order) {
+          return (a.order || 0) - (b.order || 0);
+        }
+        const dateA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
+        const dateB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
+        return dateA.getTime() - dateB.getTime();
+      });
+
     return NextResponse.json(categories);
   } catch (error) {
     console.error('Error fetching categories:', error);
@@ -35,33 +42,25 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = getUserFromRequest(req);
+    const user = await getUserFromRequest(req);
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    await connectDB();
     const { name, color } = await req.json();
-    
+
     if (!name) {
       return NextResponse.json({ error: 'Category name is required' }, { status: 400 });
     }
 
-    let userObjectId;
-    try {
-      userObjectId = new mongoose.Types.ObjectId(user.userId);
-    } catch (error) {
-      console.error('Error converting userId to ObjectId:', error);
-    }
-    
-    const existingCategory = await Category.findOne({ 
-      name, 
-      $or: [
-        { userId: userObjectId },
-        { userId: user.userId }
-      ]
-    });
-    if (existingCategory) {
+    // Check if category already exists
+    const existingCategorySnapshot = await adminDb
+      .collection('categories')
+      .where('userId', '==', user.userId)
+      .where('name', '==', name)
+      .get();
+
+    if (!existingCategorySnapshot.empty) {
       return NextResponse.json({ error: 'Category already exists' }, { status: 400 });
     }
 
@@ -71,31 +70,44 @@ export async function POST(req: NextRequest) {
       '#DDA0DD', '#FFB347', '#87CEEB', '#98D8C8', '#F7DC6F',
       '#BB8FCE', '#85C1E9', '#F8C471', '#82E0AA', '#F1948A'
     ];
-    
+
     // Get random color if none provided
     const randomColor = color || defaultColors[Math.floor(Math.random() * defaultColors.length)];
 
     // Get the highest order number for this user
-    const lastCategory = await Category.findOne({
-      $or: [
-        { userId: userObjectId },
-        { userId: user.userId }
-      ]
-    }).sort({ order: -1 });
+    const categoriesSnapshot = await adminDb
+      .collection('categories')
+      .where('userId', '==', user.userId)
+      .get();
 
-    const nextOrder = lastCategory ? lastCategory.order + 1 : 0;
-    console.log('🔍 Creating category with order:', nextOrder, 'Last category order:', lastCategory?.order);
+    let maxOrder = -1;
+    categoriesSnapshot.docs.forEach(doc => {
+      const data = doc.data();
+      if (typeof data.order === 'number' && data.order > maxOrder) {
+        maxOrder = data.order;
+      }
+    });
+
+    const nextOrder = maxOrder + 1;
+    console.log('🔍 Creating category with order:', nextOrder, 'Max order found:', maxOrder);
 
     const categoryData = {
       name,
       color: randomColor,
-      userId: userObjectId || user.userId,
+      userId: user.userId,
       order: nextOrder,
+      createdAt: admin.firestore.Timestamp.now()
     };
-    
+
     console.log('🔍 Category data to create:', categoryData);
 
-    const category = await Category.create(categoryData);
+    const docRef = await adminDb.collection('categories').add(categoryData);
+
+    const category = {
+      _id: docRef.id,
+      ...categoryData,
+      createdAt: categoryData.createdAt.toDate()
+    };
 
     console.log('🔍 Created category result:', {
       _id: category._id,
@@ -103,14 +115,6 @@ export async function POST(req: NextRequest) {
       order: category.order,
       orderExists: category.order !== undefined,
       orderType: typeof category.order
-    });
-
-    // Verify by fetching it back
-    const verifyCategory = await Category.findById(category._id);
-    console.log('🔍 Verification fetch:', {
-      order: verifyCategory?.order,
-      orderExists: verifyCategory?.order !== undefined,
-      orderType: typeof verifyCategory?.order
     });
 
     return NextResponse.json(category, { status: 201 });

@@ -1,60 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server';
-import connectDB from '@/lib/mongodb';
-import Category from '@/models/Category';
 import { getUserFromRequest } from '@/middleware/auth';
-import mongoose from 'mongoose';
+import { adminDb } from '@/lib/firebaseAdmin';
 
 export async function PUT(req: NextRequest) {
   try {
-    const user = getUserFromRequest(req);
-    
+    const user = await getUserFromRequest(req);
+
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    await connectDB();
-
-    // Handle user ID format like other endpoints
-    let userObjectId: mongoose.Types.ObjectId | undefined;
-    try {
-      userObjectId = new mongoose.Types.ObjectId(user.userId);
-    } catch (error) {
-      console.error('Error converting userId to ObjectId:', error);
-    }
-
     const { categoryOrders } = await req.json();
-    
+
     if (!Array.isArray(categoryOrders)) {
       return NextResponse.json({ error: 'Invalid category orders format' }, { status: 400 });
     }
 
-    // Update the order for each category
-    const updatePromises = categoryOrders.map(({ categoryId, order }) => 
-      Category.findOneAndUpdate(
-        { 
-          _id: categoryId, 
-          $or: [
-            { userId: userObjectId },
-            { userId: user.userId }
-          ]
-        },
-        { order },
-        { new: true }
-      )
-    );
+    // Update the order for each category using batch
+    const batch = adminDb.batch();
+    let updatedCount = 0;
 
-    const results = await Promise.all(updatePromises);
+    for (const { categoryId, order } of categoryOrders) {
+      // Verify category belongs to user
+      const categoryDoc = await adminDb.collection('categories').doc(categoryId).get();
+      if (categoryDoc.exists && categoryDoc.data()?.userId === user.userId) {
+        batch.update(categoryDoc.ref, { order });
+        updatedCount++;
+      }
+    }
 
-    return NextResponse.json({ 
+    await batch.commit();
+
+    return NextResponse.json({
       message: 'Category order updated successfully',
-      updatedCount: results.filter(Boolean).length 
+      updatedCount
     });
 
   } catch (error) {
     console.error('Error updating category order:', error);
-    return NextResponse.json({ 
-      error: 'Internal server error', 
-      details: error instanceof Error ? error.message : 'Unknown error' 
+    return NextResponse.json({
+      error: 'Internal server error',
+      details: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 });
   }
 }

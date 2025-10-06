@@ -1,18 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import connectDB from '@/lib/mongodb';
-import Expense from '@/models/Expense';
-import Category from '@/models/Category';
 import { getUserFromRequest } from '@/middleware/auth';
-import mongoose from 'mongoose';
+import { adminDb } from '@/lib/firebaseAdmin';
 
 export async function GET(req: NextRequest) {
   try {
-    const user = getUserFromRequest(req);
+    const user = await getUserFromRequest(req);
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
-    await connectDB();
 
     const { searchParams } = new URL(req.url);
     const period = searchParams.get('period') || 'monthly';
@@ -23,101 +18,174 @@ export async function GET(req: NextRequest) {
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    
+
     // Determine period for category stats
     const periodStart = period === 'daily' ? startOfDay : startOfMonth;
 
-    // Convert userId to ObjectId for proper MongoDB querying
     console.log('User from token:', user);
     console.log('User.userId:', user.userId, 'Type:', typeof user.userId);
-    
-    let userObjectId = null;
-    try {
-      if (mongoose.Types.ObjectId.isValid(user.userId)) {
-        userObjectId = new mongoose.Types.ObjectId(user.userId);
-        console.log('Successfully converted to ObjectId:', userObjectId);
-      } else {
-        console.log('userId is not a valid ObjectId, will use as string:', user.userId);
-      }
-    } catch (error) {
-      console.error('Error converting userId to ObjectId:', error);
-      // Continue with string userId instead of failing
-    }
-    
-    // Get recent expenses with pagination (latest first)
-    // Build query based on available userId formats
-    const userQuery = userObjectId ? 
-      { $or: [{ userId: userObjectId }, { userId: user.userId }] } : 
-      { userId: user.userId };
-    
-    const recentExpenses = await Expense.find(userQuery)
-    .populate('categoryId', 'name color')
-    .sort({ date: -1 })
-    .skip(skip)
-    .limit(limit);
 
-    // Get total count for pagination
-    const totalExpenses = await Expense.countDocuments(userQuery);
+    // Get all expenses for the user
+    const expensesSnapshot = await adminDb
+      .collection('expenses')
+      .where('userId', '==', user.userId)
+      .get();
+
+    const allExpenses = expensesSnapshot.docs.map(doc => {
+      const data = doc.data();
+      return {
+        _id: doc.id,
+        ...data,
+        date: data.date?.toDate?.() || data.date,
+        amount: data.amount || 0,
+        categoryId: data.categoryId
+      };
+    });
+
+    // Sort by date descending
+    const sortedExpenses = [...allExpenses].sort((a, b) => {
+      const dateA = a.date instanceof Date ? a.date : new Date(a.date);
+      const dateB = b.date instanceof Date ? b.date : new Date(b.date);
+      return dateB.getTime() - dateA.getTime();
+    });
+
+    // Paginate recent expenses
+    const recentExpensesRaw = sortedExpenses.slice(skip, skip + limit);
+
+    // Populate category data for recent expenses
+    const recentExpenses = await Promise.all(
+      recentExpensesRaw.map(async (expense) => {
+        if (expense.categoryId) {
+          const categoryDoc = await adminDb.collection('categories').doc(expense.categoryId).get();
+          if (categoryDoc.exists) {
+            const cat = categoryDoc.data();
+            return {
+              ...expense,
+              categoryId: {
+                _id: categoryDoc.id,
+                name: cat?.name,
+                color: cat?.color
+              }
+            };
+          }
+        }
+        return expense;
+      })
+    );
+
+    const totalExpenses = allExpenses.length;
     console.log('Total expenses found:', totalExpenses);
     const totalPages = Math.ceil(totalExpenses / limit);
-    
+
     console.log('Recent expenses query result:', recentExpenses.length, 'expenses found');
 
-    const [dailyExpenses, monthlyExpenses, categoryStats] = await Promise.all([
-      Expense.find(userObjectId ? 
-        { $or: [{ userId: userObjectId, date: { $gte: startOfDay } }, { userId: user.userId, date: { $gte: startOfDay } }] } :
-        { userId: user.userId, date: { $gte: startOfDay } }
-      ).populate('categoryId', 'name color'),
+    // Filter expenses for daily and monthly
+    const dailyExpensesRaw = allExpenses.filter(e => {
+      const expenseDate = e.date instanceof Date ? e.date : new Date(e.date);
+      return expenseDate >= startOfDay;
+    });
 
-      Expense.find(userObjectId ? 
-        { $or: [{ userId: userObjectId, date: { $gte: startOfMonth } }, { userId: user.userId, date: { $gte: startOfMonth } }] } :
-        { userId: user.userId, date: { $gte: startOfMonth } }
-      ).populate('categoryId', 'name color'),
+    const monthlyExpensesRaw = allExpenses.filter(e => {
+      const expenseDate = e.date instanceof Date ? e.date : new Date(e.date);
+      return expenseDate >= startOfMonth;
+    });
 
-      Expense.aggregate([
-        {
-          $match: userObjectId ? {
-            $or: [
-              { userId: userObjectId, date: { $gte: periodStart } },
-              { userId: user.userId, date: { $gte: periodStart } }
-            ]
-          } : {
-            userId: user.userId,
-            date: { $gte: periodStart }
+    // Populate category data for daily and monthly expenses
+    const dailyExpenses = await Promise.all(
+      dailyExpensesRaw.map(async (expense) => {
+        if (expense.categoryId) {
+          const categoryDoc = await adminDb.collection('categories').doc(expense.categoryId).get();
+          if (categoryDoc.exists) {
+            const cat = categoryDoc.data();
+            return {
+              ...expense,
+              categoryId: {
+                _id: categoryDoc.id,
+                name: cat?.name,
+                color: cat?.color
+              }
+            };
           }
-        },
-        {
-          $group: {
-            _id: '$categoryId',
-            totalAmount: { $sum: '$amount' },
-            count: { $sum: 1 }
-          }
-        },
-        {
-          $lookup: {
-            from: 'categories',
-            localField: '_id',
-            foreignField: '_id',
-            as: 'category'
-          }
-        },
-        {
-          $unwind: '$category'
-        },
-        {
-          $project: {
-            categoryId: '$_id',
-            categoryName: '$category.name',
-            categoryColor: '$category.color',
-            totalAmount: 1,
-            count: 1
-          }
-        },
-        {
-          $sort: { totalAmount: -1 }
         }
-      ])
-    ]);
+        return expense;
+      })
+    );
+
+    const monthlyExpenses = await Promise.all(
+      monthlyExpensesRaw.map(async (expense) => {
+        if (expense.categoryId) {
+          const categoryDoc = await adminDb.collection('categories').doc(expense.categoryId).get();
+          if (categoryDoc.exists) {
+            const cat = categoryDoc.data();
+            return {
+              ...expense,
+              categoryId: {
+                _id: categoryDoc.id,
+                name: cat?.name,
+                color: cat?.color
+              }
+            };
+          }
+        }
+        return expense;
+      })
+    );
+
+    // Manual aggregation for category stats
+    const periodExpenses = allExpenses.filter(e => {
+      const expenseDate = e.date instanceof Date ? e.date : new Date(e.date);
+      return expenseDate >= periodStart;
+    });
+
+    const categoryStatsMap = new Map();
+    periodExpenses.forEach(expense => {
+      const catId = expense.categoryId || 'uncategorized';
+      if (!categoryStatsMap.has(catId)) {
+        categoryStatsMap.set(catId, {
+          _id: catId,
+          totalAmount: 0,
+          count: 0
+        });
+      }
+      const stat = categoryStatsMap.get(catId);
+      stat.totalAmount += expense.amount;
+      stat.count += 1;
+    });
+
+    // Fetch category details and build final stats
+    const categoryStatsArray = await Promise.all(
+      Array.from(categoryStatsMap.entries()).map(async ([catId, stat]) => {
+        if (catId === 'uncategorized') {
+          return {
+            categoryId: catId,
+            categoryName: 'Uncategorized',
+            categoryColor: '#3B82F6',
+            totalAmount: stat.totalAmount,
+            count: stat.count
+          };
+        }
+        const categoryDoc = await adminDb.collection('categories').doc(catId).get();
+        if (categoryDoc.exists) {
+          const cat = categoryDoc.data();
+          return {
+            categoryId: catId,
+            categoryName: cat?.name || 'Unknown',
+            categoryColor: cat?.color || '#3B82F6',
+            totalAmount: stat.totalAmount,
+            count: stat.count
+          };
+        }
+        return {
+          categoryId: catId,
+          categoryName: 'Unknown',
+          categoryColor: '#3B82F6',
+          totalAmount: stat.totalAmount,
+          count: stat.count
+        };
+      })
+    );
+
+    const categoryStats = categoryStatsArray.sort((a, b) => b.totalAmount - a.totalAmount);
 
     const dailyTotal = dailyExpenses.reduce((sum, expense) => sum + expense.amount, 0);
     const monthlyTotal = monthlyExpenses.reduce((sum, expense) => sum + expense.amount, 0);

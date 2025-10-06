@@ -1,26 +1,26 @@
-import jwt from 'jsonwebtoken';
 import { NextRequest } from 'next/server';
+import { adminAuth } from '@/lib/firebaseAdmin';
 
 export function getTokenFromRequest(req: NextRequest) {
-  const token = req.cookies.get('token')?.value;
+  const token = req.cookies.get('firebaseToken')?.value;
   return token;
 }
 
-export function verifyToken(token: string) {
+export async function verifyToken(token: string) {
   try {
-    const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET!);
-    return decoded as { userId: string; email: string };
+    const decodedToken = await adminAuth.verifyIdToken(token);
+    return { userId: decodedToken.uid, email: decodedToken.email || '' };
   } catch (error) {
     return null;
   }
 }
 
-export function getUserFromRequest(req: NextRequest) {
+export async function getUserFromRequest(req: NextRequest) {
   const token = getTokenFromRequest(req);
   console.log('Token from request:', token ? 'Found' : 'Not found');
   if (!token) return null;
-  
-  const user = verifyToken(token);
+
+  const user = await verifyToken(token);
   console.log('User from token verification:', user ? { userId: user.userId, email: user.email } : 'Invalid token');
   return user;
 }
