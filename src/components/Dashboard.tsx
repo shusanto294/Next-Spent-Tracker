@@ -4,6 +4,11 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import ExpenseForm from './ExpenseForm';
 import { LogOut, Calendar, TrendingUp, Settings, ChevronLeft, ChevronRight, CalendarDays, Trash2, X } from 'lucide-react';
+import { useAuth } from '@/hooks/useAuth';
+import { getExpenses, getCategories, deleteExpense, deleteCategory, getUserSettings } from '@/services/firestoreService';
+import { logoutUser } from '@/services/authService';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 interface CategoryStat {
   categoryId: string;
@@ -14,29 +19,19 @@ interface CategoryStat {
   percentage: string;
 }
 
-interface RecentExpenses {
-  expenses: any[];
-  pagination: {
-    currentPage: number;
-    totalPages: number;
-    totalItems: number;
-    hasNextPage: boolean;
-    hasPrevPage: boolean;
+interface ExpenseWithCategory {
+  id: string;
+  userId: string;
+  amount: number;
+  description: string;
+  categoryId: string;
+  date: Date;
+  createdAt: Date;
+  category?: {
+    id: string;
+    name: string;
+    color: string;
   };
-}
-
-interface DashboardData {
-  daily: {
-    total: number;
-    expenses: any[];
-  };
-  monthly: {
-    total: number;
-    expenses: any[];
-  };
-  recent: RecentExpenses;
-  categoryStats: CategoryStat[];
-  period: string;
 }
 
 interface UserSettings {
@@ -46,7 +41,9 @@ interface UserSettings {
 }
 
 export default function Dashboard() {
-  const [data, setData] = useState<DashboardData | null>(null);
+  const { user, loading: authLoading } = useAuth();
+  const [allExpenses, setAllExpenses] = useState<ExpenseWithCategory[]>([]);
+  const [categories, setCategories] = useState<any[]>([]);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
@@ -82,51 +79,57 @@ export default function Dashboard() {
     return new Date(userDateString);
   };
 
+  // Check auth and redirect if not logged in
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/login');
+    }
+  }, [authLoading, user, router]);
+
   // Fetch user settings only once on component mount and when page regains focus
   useEffect(() => {
-    fetchUserSettings();
-    
-    // Refresh settings when page becomes visible (returning from settings page)
-    const handleFocus = () => {
+    if (user) {
       fetchUserSettings();
-    };
-    
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, []);
 
+      // Refresh settings when page becomes visible (returning from settings page)
+      const handleFocus = () => {
+        fetchUserSettings();
+      };
+
+      window.addEventListener('focus', handleFocus);
+      return () => window.removeEventListener('focus', handleFocus);
+    }
+  }, [user]);
 
   // Fetch dashboard data when date changes or when user settings are loaded
   useEffect(() => {
-    if (userSettings?.timezone) {
-      fetchDashboardData(1, categoryPeriod, selectedDate, selectedCategoryId, 'INITIAL_LOAD_OR_DATE_CHANGED - useEffect triggered');
+    if (user && userSettings?.timezone) {
+      fetchDashboardData('INITIAL_LOAD_OR_DATE_CHANGED - useEffect triggered');
     }
-  }, [selectedDate, userSettings]);
+  }, [selectedDate, userSettings, user]);
 
   const handlePageChange = (newPage: number) => {
-    fetchDashboardData(newPage, categoryPeriod, selectedDate, selectedCategoryId, `PAGINATION - User clicked page ${newPage}`);
+    setCurrentPage(newPage);
   };
 
   const handlePeriodChange = (newPeriod: 'daily' | 'weekly' | 'monthly') => {
     setCategoryPeriod(newPeriod);
-    fetchDashboardData(1, newPeriod, selectedDate, selectedCategoryId, `PERIOD_CHANGED - User selected ${newPeriod} view`);
+    setCurrentPage(1);
   };
 
   const handleDateChange = (newDate: Date) => {
     setSelectedDate(newDate);
-    // The useEffect will handle the refetch when selectedDate changes
+    setCurrentPage(1);
   };
 
   const handleWeekView = () => {
-    const newPeriod = 'weekly';
-    setCategoryPeriod(newPeriod);
-    fetchDashboardData(1, newPeriod, selectedDate, selectedCategoryId, 'WEEK_VIEW - User clicked This Week button');
+    setCategoryPeriod('weekly');
+    setCurrentPage(1);
   };
 
   const handleMonthView = () => {
-    const newPeriod = 'monthly';
-    setCategoryPeriod(newPeriod);
-    fetchDashboardData(1, newPeriod, selectedDate, selectedCategoryId, 'MONTH_VIEW - User clicked This Month button');
+    setCategoryPeriod('monthly');
+    setCurrentPage(1);
   };
 
   const formatDateForInput = (date: Date) => {
@@ -135,52 +138,28 @@ export default function Dashboard() {
 
 
 
-  const fetchDashboardData = async (page = 1, period = categoryPeriod, date = selectedDate, categoryId = selectedCategoryId, reason = 'unknown') => {
+  const fetchDashboardData = async (reason = 'unknown') => {
+    if (!user) return;
+
     try {
-      console.log('🔄 FETCHING DATA FROM DATABASE');
+      console.log('🔄 FETCHING DATA FROM FIRESTORE');
       console.log('📍 REASON:', reason);
-      console.log('📊 Parameters:', { page, period, date: date.toISOString().split('T')[0], categoryId });
-      
-      const params = new URLSearchParams({
-        page: page.toString(),
-        limit: '10',
-        period,
-        date: date.toISOString().split('T')[0] // Send date as YYYY-MM-DD
-      });
-      
-      // Add category filter if selected
-      if (categoryId) {
-        params.append('categoryId', categoryId);
-      }
-      
-      const url = `/api/expenses/stats-simple?${params}`;
-      
-      const response = await fetch(url);
-      if (response.status === 401) {
-        router.push('/login');
-        return;
-      }
-      
-      const responseData = await response.json();
-      
-      if (response.ok) {
-        setData(responseData);
-        setCurrentPage(page);
-        setCategoryPeriod(period);
-        
-        // Check if the currently selected category still exists in the new data
-        if (selectedCategoryId && responseData.categoryStats) {
-          const categoryStillExists = responseData.categoryStats.some(
-            (cat: CategoryStat) => cat.categoryId === selectedCategoryId
-          );
-          // Only reset if the category no longer exists in the new period
-          if (!categoryStillExists) {
-            setSelectedCategoryId(null);
-          }
-        }
-      } else {
-        console.error('API Error:', response.status, response.statusText);
-      }
+
+      // Fetch expenses and categories
+      const [expensesResult, categoriesData] = await Promise.all([
+        getExpenses(user.uid),
+        getCategories(user.uid),
+      ]);
+
+      setCategories(categoriesData);
+
+      // Map expenses to include category data
+      const expensesWithCategories = expensesResult.expenses.map((expense: any) => ({
+        ...expense,
+        category: categoriesData.find((cat) => cat.id === expense.categoryId),
+      }));
+
+      setAllExpenses(expensesWithCategories);
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
     } finally {
@@ -189,29 +168,32 @@ export default function Dashboard() {
   };
 
   const fetchUserSettings = async () => {
+    if (!user) return;
+
     try {
-      const response = await fetch('/api/user/settings');
-      
-      if (response.ok) {
-        const settings = await response.json();
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+
+      if (userDoc.exists()) {
+        const data = userDoc.data();
+        const settings = {
+          currency: data.currency || 'USD',
+          currencySymbol: data.currencySymbol || '$',
+          timezone: data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+        };
         setUserSettings(settings);
-        
+
         // Initialize with correct date in user's timezone
         if (settings.timezone) {
           const formatter = new Intl.DateTimeFormat('en-CA', {
             timeZone: settings.timezone,
             year: 'numeric',
             month: '2-digit',
-            day: '2-digit'
+            day: '2-digit',
           });
           const userDateString = formatter.format(new Date());
           const currentDateInUserTZ = new Date(userDateString);
           setSelectedDate(currentDateInUserTZ);
-          
-          // Don't fetch here - let the useEffect handle it when selectedDate changes
         }
-      } else {
-        console.error('Failed to fetch user settings:', response.status);
       }
     } catch (error) {
       console.error('Error fetching user settings:', error);
@@ -220,7 +202,7 @@ export default function Dashboard() {
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await logoutUser();
       router.push('/login');
     } catch (error) {
       console.error('Error logging out:', error);
@@ -253,21 +235,17 @@ export default function Dashboard() {
   };
 
   const confirmDelete = async () => {
-    if (!deleteConfirmation.id || !deleteConfirmation.type) return;
+    if (!deleteConfirmation.id || !deleteConfirmation.type || !user) return;
 
     try {
-      const endpoint = deleteConfirmation.type === 'expense' 
-        ? `/api/expenses/${deleteConfirmation.id}`
-        : `/api/categories/${deleteConfirmation.id}`;
-      
-      const response = await fetch(endpoint, { method: 'DELETE' });
-      
-      if (response.ok) {
-        setDeleteConfirmation({ isOpen: false, type: null, id: null, name: '' });
-        fetchDashboardData(currentPage, categoryPeriod, selectedDate, selectedCategoryId, `DELETE_CONFIRMED - Refreshing after deleting ${deleteConfirmation.type}: ${deleteConfirmation.name}`);
+      if (deleteConfirmation.type === 'expense') {
+        await deleteExpense(deleteConfirmation.id);
       } else {
-        console.error('Delete failed:', response.statusText);
+        await deleteCategory(deleteConfirmation.id);
       }
+
+      setDeleteConfirmation({ isOpen: false, type: null, id: null, name: '' });
+      fetchDashboardData(`DELETE_CONFIRMED - Refreshing after deleting ${deleteConfirmation.type}: ${deleteConfirmation.name}`);
     } catch (error) {
       console.error('Error deleting:', error);
     }
@@ -279,22 +257,156 @@ export default function Dashboard() {
 
   const handleCategoryFilter = (categoryId: string) => {
     const newCategoryId = selectedCategoryId === categoryId ? null : categoryId;
-    const categoryName = data?.categoryStats?.find(cat => cat.categoryId === categoryId)?.categoryName || 'Unknown';
     setSelectedCategoryId(newCategoryId);
-    // Refetch data with the new category filter
-    const reason = newCategoryId 
-      ? `CATEGORY_FILTER - User selected category: ${categoryName} (${categoryId})`
-      : `CLEAR_FILTER - User cleared category filter`;
-    fetchDashboardData(1, categoryPeriod, selectedDate, newCategoryId, reason);
+    setCurrentPage(1);
   };
 
-  if (isLoading) {
+  // Calculate daily expenses (for selected date)
+  const calculateDailyExpenses = () => {
+    const startOfDay = new Date(selectedDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(selectedDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const dailyExpenses = allExpenses.filter((expense) => {
+      const expenseDate = new Date(expense.date);
+      return expenseDate >= startOfDay && expenseDate <= endOfDay;
+    });
+
+    const total = dailyExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+    return { total, expenses: dailyExpenses };
+  };
+
+  // Calculate monthly expenses (for selected date's month)
+  const calculateMonthlyExpenses = () => {
+    const startOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+    const endOfMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0, 23, 59, 59, 999);
+
+    const monthlyExpenses = allExpenses.filter((expense) => {
+      const expenseDate = new Date(expense.date);
+      return expenseDate >= startOfMonth && expenseDate <= endOfMonth;
+    });
+
+    const total = monthlyExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+    return { total, expenses: monthlyExpenses };
+  };
+
+  // Calculate expenses for the period (daily, weekly, or monthly)
+  const calculatePeriodExpenses = () => {
+    let startDate: Date;
+    let endDate: Date;
+
+    if (categoryPeriod === 'daily') {
+      startDate = new Date(selectedDate);
+      startDate.setHours(0, 0, 0, 0);
+      endDate = new Date(selectedDate);
+      endDate.setHours(23, 59, 59, 999);
+    } else if (categoryPeriod === 'weekly') {
+      // Get start of week (Sunday)
+      startDate = new Date(selectedDate);
+      const day = startDate.getDay();
+      startDate.setDate(startDate.getDate() - day);
+      startDate.setHours(0, 0, 0, 0);
+
+      // Get end of week (Saturday)
+      endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + 6);
+      endDate.setHours(23, 59, 59, 999);
+    } else {
+      // Monthly
+      startDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+      endDate = new Date(selectedDate.getFullYear(), selectedDate.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
+
+    return allExpenses.filter((expense) => {
+      const expenseDate = new Date(expense.date);
+      return expenseDate >= startDate && expenseDate <= endDate;
+    });
+  };
+
+  // Calculate category stats for the period
+  const calculateCategoryStats = (): CategoryStat[] => {
+    const periodExpenses = calculatePeriodExpenses();
+
+    // Group expenses by category
+    const categoryMap = new Map<string, { totalAmount: number; count: number; category: any }>();
+
+    periodExpenses.forEach((expense) => {
+      const categoryId = expense.categoryId;
+      const existing = categoryMap.get(categoryId);
+
+      if (existing) {
+        existing.totalAmount += expense.amount;
+        existing.count += 1;
+      } else {
+        categoryMap.set(categoryId, {
+          totalAmount: expense.amount,
+          count: 1,
+          category: expense.category,
+        });
+      }
+    });
+
+    // Calculate total for percentage
+    const grandTotal = Array.from(categoryMap.values()).reduce((sum, cat) => sum + cat.totalAmount, 0);
+
+    // Convert to array and calculate percentages
+    const stats: CategoryStat[] = Array.from(categoryMap.entries()).map(([categoryId, data]) => ({
+      categoryId,
+      categoryName: data.category?.name || 'Unknown',
+      categoryColor: data.category?.color || '#3B82F6',
+      totalAmount: data.totalAmount,
+      count: data.count,
+      percentage: grandTotal > 0 ? ((data.totalAmount / grandTotal) * 100).toFixed(1) : '0',
+    }));
+
+    // Sort by total amount descending
+    return stats.sort((a, b) => b.totalAmount - a.totalAmount);
+  };
+
+  // Get paginated recent expenses
+  const getPaginatedExpenses = () => {
+    const itemsPerPage = 10;
+    let expensesToShow = allExpenses;
+
+    // Filter by category if selected
+    if (selectedCategoryId) {
+      expensesToShow = expensesToShow.filter((expense) => expense.categoryId === selectedCategoryId);
+    }
+
+    // Sort by date descending
+    expensesToShow = [...expensesToShow].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    const totalItems = expensesToShow.length;
+    const totalPages = Math.ceil(totalItems / itemsPerPage);
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+
+    return {
+      expenses: expensesToShow.slice(startIndex, endIndex),
+      pagination: {
+        currentPage,
+        totalPages,
+        totalItems,
+        hasNextPage: currentPage < totalPages,
+        hasPrevPage: currentPage > 1,
+      },
+    };
+  };
+
+  if (isLoading || authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-lg">Loading...</div>
       </div>
     );
   }
+
+  // Calculate data for display
+  const dailyData = calculateDailyExpenses();
+  const monthlyData = calculateMonthlyExpenses();
+  const categoryStats = calculateCategoryStats();
+  const recentExpenses = getPaginatedExpenses();
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -330,10 +442,10 @@ export default function Dashboard() {
               <h2 className="text-base sm:text-lg font-semibold text-gray-900">Today&apos;s Spent</h2>
             </div>
             <p className="text-2xl sm:text-3xl font-bold text-blue-600">
-              {formatCurrency(data?.daily.total || 0)}
+              {formatCurrency(dailyData.total)}
             </p>
             <p className="text-gray-500 text-sm">
-              {data?.daily.expenses.length || 0} transactions
+              {dailyData.expenses.length} transactions
             </p>
           </div>
 
@@ -343,10 +455,10 @@ export default function Dashboard() {
               <h2 className="text-base sm:text-lg font-semibold text-gray-900">This Month</h2>
             </div>
             <p className="text-2xl sm:text-3xl font-bold text-green-600">
-              {formatCurrency(data?.monthly.total || 0)}
+              {formatCurrency(monthlyData.total)}
             </p>
             <p className="text-gray-500 text-sm">
-              {data?.monthly.expenses.length || 0} transactions
+              {monthlyData.expenses.length} transactions
             </p>
           </div>
         </div>
@@ -438,16 +550,16 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="p-4 sm:p-6">
-            {data?.categoryStats && data.categoryStats.length > 0 ? (
+            {categoryStats && categoryStats.length > 0 ? (
               <div className="flex flex-col">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-md font-medium text-gray-800">Category Details</h3>
                   <span className="text-md font-semibold text-gray-700">
-                    Total: {formatCurrency(data.categoryStats.reduce((sum, category) => sum + category.totalAmount, 0))}
+                    Total: {formatCurrency(categoryStats.reduce((sum, category) => sum + category.totalAmount, 0))}
                   </span>
                 </div>
                 <div className="overflow-y-auto space-y-3 pr-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
-                  {data.categoryStats.map((category) => {
+                  {categoryStats.map((category) => {
                     const percentage = parseFloat(category.percentage || '0');
                     return (
                       <div
@@ -508,32 +620,21 @@ export default function Dashboard() {
             ) : (
               <div className="text-center py-8">
                 <p className="text-gray-500">
-                  {data?.categoryStats ? 
-                    `No category data available for this ${categoryPeriod === 'daily' ? 'day' : categoryPeriod === 'weekly' ? 'week' : 'month'}.` : 
-                    'No expenses found for this period.'
-                  }
+                  No category data available for this {categoryPeriod === 'daily' ? 'day' : categoryPeriod === 'weekly' ? 'week' : 'month'}.
                 </p>
                 <p className="text-sm text-gray-400 mt-1">
                   Start by adding your first expense!
                 </p>
-                {data && (
-                  <div className="mt-4 text-xs text-gray-400">
-                    <p>Debug info: categoryStats length = {data.categoryStats?.length || 0}</p>
-                    <p>Period: {categoryPeriod}</p>
-                    <p>Selected date: {selectedDate.toDateString()}</p>
-                  </div>
-                )}
               </div>
             )}
           </div>
         </div>
 
-        {data?.recent && data.recent.expenses && data.recent.expenses.length > 0 && (() => {
-          // Backend now handles filtering, so just use all returned expenses
-          const filteredExpenses = data.recent.expenses;
-          
-          const selectedCategoryName = selectedCategoryId 
-            ? data.categoryStats?.find(cat => cat.categoryId === selectedCategoryId)?.categoryName 
+        {recentExpenses && recentExpenses.expenses && recentExpenses.expenses.length > 0 && (() => {
+          const filteredExpenses = recentExpenses.expenses;
+
+          const selectedCategoryName = selectedCategoryId
+            ? categoryStats?.find(cat => cat.categoryId === selectedCategoryId)?.categoryName
             : null;
 
           return (
@@ -550,7 +651,7 @@ export default function Dashboard() {
                     <button
                       onClick={() => {
                         setSelectedCategoryId(null);
-                        fetchDashboardData(1, categoryPeriod, selectedDate, null, 'CLEAR_FILTER - User clicked Show all transactions');
+                        setCurrentPage(1);
                       }}
                       className="text-sm text-blue-600 hover:text-blue-800 underline mt-1"
                     >
@@ -559,44 +660,44 @@ export default function Dashboard() {
                   )}
                 </div>
                 <div className="text-sm text-gray-500">
-                  Showing {filteredExpenses.length} of {data.recent.pagination.totalItems} expenses
+                  Showing {filteredExpenses.length} of {recentExpenses.pagination.totalItems} expenses
                 </div>
               </div>
               <div className="p-4 sm:p-6">
                 {filteredExpenses.length > 0 ? (
                   <div className="space-y-3">
                     {filteredExpenses.map((expense: any) => (
-                  <div
-                    key={expense._id}
-                    className="flex items-center justify-between p-3 rounded-lg bg-gray-50"
-                  >
-                    <div className="flex items-center space-x-3 flex-1 min-w-0">
                       <div
-                        className="w-3 h-3 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: expense.categoryId?.color || '#3B82F6' }}
-                      ></div>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-gray-900 text-sm sm:text-base truncate">
-                          {expense.description}
-                        </p>
-                        <p className="text-xs sm:text-sm text-gray-500 truncate">
-                          {expense.categoryId?.name || new Date(expense.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {' '}
-                          {new Date(expense.date).toLocaleDateString()}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center space-x-2 ml-2 flex-shrink-0">
-                      <p className="font-semibold text-gray-900 text-sm sm:text-base">
-                        {formatCurrency(expense.amount)}
-                      </p>
-                      <button
-                        onClick={() => handleDeleteExpense(expense._id, expense.description)}
-                        className="p-1 text-gray-400 hover:text-red-500 transition-colors"
-                        title={`Delete ${expense.description}`}
+                        key={expense.id}
+                        className="flex items-center justify-between p-3 rounded-lg bg-gray-50"
                       >
-                        <Trash2 size={16} />
-                      </button>
-                    </div>
+                        <div className="flex items-center space-x-3 flex-1 min-w-0">
+                          <div
+                            className="w-3 h-3 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: expense.category?.color || '#3B82F6' }}
+                          ></div>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium text-gray-900 text-sm sm:text-base truncate">
+                              {expense.description}
+                            </p>
+                            <p className="text-xs sm:text-sm text-gray-500 truncate">
+                              {expense.category?.name || new Date(expense.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {' '}
+                              {new Date(expense.date).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2 ml-2 flex-shrink-0">
+                          <p className="font-semibold text-gray-900 text-sm sm:text-base">
+                            {formatCurrency(expense.amount)}
+                          </p>
+                          <button
+                            onClick={() => handleDeleteExpense(expense.id || '', expense.description)}
+                            className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                            title={`Delete ${expense.description}`}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -608,7 +709,7 @@ export default function Dashboard() {
                     <button
                       onClick={() => {
                         setSelectedCategoryId(null);
-                        fetchDashboardData(1, categoryPeriod, selectedDate, null, 'CLEAR_FILTER - User clicked Show all transactions (no results)');
+                        setCurrentPage(1);
                       }}
                       className="text-sm text-blue-600 hover:text-blue-800 underline mt-2"
                     >
@@ -616,17 +717,17 @@ export default function Dashboard() {
                     </button>
                   </div>
                 )}
-                
+
                 {/* Pagination - only show if not filtering and has multiple pages */}
-                {!selectedCategoryId && data.recent.pagination.totalPages > 1 && (
+                {!selectedCategoryId && recentExpenses.pagination.totalPages > 1 && (
                   <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between border-t pt-4 space-y-4 sm:space-y-0">
                     <div className="text-sm text-gray-500 text-center sm:text-left">
-                      Page {data.recent.pagination.currentPage} of {data.recent.pagination.totalPages}
+                      Page {recentExpenses.pagination.currentPage} of {recentExpenses.pagination.totalPages}
                     </div>
                     <div className="flex justify-center sm:justify-end space-x-2">
                       <button
                         onClick={() => handlePageChange(currentPage - 1)}
-                        disabled={!data.recent.pagination.hasPrevPage}
+                        disabled={!recentExpenses.pagination.hasPrevPage}
                         className="flex items-center px-3 py-2 text-sm bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <ChevronLeft size={16} className="mr-1" />
@@ -634,7 +735,7 @@ export default function Dashboard() {
                       </button>
                       <button
                         onClick={() => handlePageChange(currentPage + 1)}
-                        disabled={!data.recent.pagination.hasNextPage}
+                        disabled={!recentExpenses.pagination.hasNextPage}
                         className="flex items-center px-3 py-2 text-sm bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <span className="hidden sm:inline">Next</span>
@@ -649,7 +750,7 @@ export default function Dashboard() {
         })()}
       </main>
 
-      <ExpenseForm onExpenseAdded={() => fetchDashboardData(currentPage, categoryPeriod, selectedDate, selectedCategoryId, 'EXPENSE_ADDED - Refreshing after new expense was added')} />
+      <ExpenseForm onExpenseAdded={() => fetchDashboardData('EXPENSE_ADDED - Refreshing after new expense was added')} />
       
       {/* Delete Confirmation Popup */}
       {deleteConfirmation.isOpen && (

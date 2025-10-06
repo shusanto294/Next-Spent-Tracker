@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { countries, currencies, timezones, countryDefaults } from '@/lib/countryDefaults';
+import { loginUser, registerUser } from '@/services/authService';
+import { updateUserSettings } from '@/services/firestoreService';
 
 interface AuthFormProps {
   mode: 'login' | 'register';
@@ -28,35 +30,34 @@ export default function AuthForm({ mode }: AuthFormProps) {
     setError('');
 
     try {
-      const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
-      const body = mode === 'login' 
-        ? { email: formData.email, password: formData.password }
-        : {
-            firstName: formData.firstName,
-            lastName: formData.lastName,
-            email: formData.email,
-            password: formData.password,
-            country: formData.country,
-            currency: formData.currency,
-            timezone: formData.timezone,
-          };
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Something went wrong');
-      }
-
-      if (mode === 'register') {
-        router.push('/login');
-      } else {
+      if (mode === 'login') {
+        await loginUser(formData.email, formData.password);
         router.push('/dashboard');
+      } else {
+        // Get currency symbol from selected currency
+        const selectedCurrency = currencies.find(c => c.code === formData.currency);
+        const currencySymbol = selectedCurrency?.symbol || '$';
+
+        // Combine first and last name
+        const fullName = `${formData.firstName} ${formData.lastName}`.trim();
+
+        const result = await registerUser(fullName, formData.email, formData.password);
+
+        // Update user settings with selected country, currency, and timezone
+        await updateUserSettings(result.user.id, {
+          currency: formData.currency,
+          currencySymbol: currencySymbol,
+          timezone: formData.timezone,
+        });
+
+        // Also update the user document with first/last name and country
+        await updateUserSettings(result.user.id, {
+          firstName: formData.firstName,
+          lastName: formData.lastName,
+          country: formData.country,
+        } as any);
+
+        router.push('/login');
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Something went wrong');

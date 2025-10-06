@@ -1,27 +1,29 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function Home() {
   const router = useRouter();
+  const pathname = usePathname();
+  const { user, loading } = useAuth();
 
   useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const response = await fetch('/api/expenses/stats');
-        if (response.ok) {
-          router.push('/dashboard');
-        } else {
-          router.push('/login');
-        }
-      } catch (error) {
+    // Only redirect from the root page, not from other pages
+    if (pathname === '/' && !loading) {
+      if (user) {
+        router.push('/dashboard');
+      } else {
         router.push('/login');
       }
-    };
+    }
+  }, [user, loading, router, pathname]);
 
-    checkAuth();
-  }, [router]);
+  // If we're not on the root page, don't render anything
+  if (pathname !== '/') {
+    return null;
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">

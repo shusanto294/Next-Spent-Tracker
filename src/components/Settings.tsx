@@ -4,6 +4,10 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Save } from 'lucide-react';
 import { currencies, timezones, countries, countryDefaults } from '@/lib/countryDefaults';
+import { useAuth } from '@/hooks/useAuth';
+import { getUserSettings, updateUserSettings } from '@/services/firestoreService';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 interface UserSettings {
   firstName: string;
@@ -15,6 +19,7 @@ interface UserSettings {
 }
 
 export default function Settings() {
+  const { user, loading: authLoading } = useAuth();
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [formData, setFormData] = useState({
     firstName: '',
@@ -30,27 +35,33 @@ export default function Settings() {
   const router = useRouter();
 
   useEffect(() => {
-    fetchSettings();
-  }, []);
+    if (!authLoading && !user) {
+      router.push('/login');
+      return;
+    }
+    if (user) {
+      fetchSettings();
+    }
+  }, [user, authLoading, router]);
 
   const fetchSettings = async () => {
+    if (!user) return;
+
     try {
-      const response = await fetch('/api/user/settings');
-      if (response.status === 401) {
-        router.push('/login');
-        return;
-      }
-      if (response.ok) {
-        const data = await response.json();
-        setSettings(data);
-        setFormData({
-          firstName: data.firstName,
-          lastName: data.lastName,
-          currency: data.currency,
-          currencySymbol: data.currencySymbol,
-          timezone: data.timezone,
-          country: data.country,
-        });
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+
+      if (userDoc.exists()) {
+        const data = userDoc.data();
+        const settingsData = {
+          firstName: data.firstName || '',
+          lastName: data.lastName || '',
+          currency: data.currency || 'USD',
+          currencySymbol: data.currencySymbol || '$',
+          timezone: data.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone,
+          country: data.country || '',
+        };
+        setSettings(settingsData);
+        setFormData(settingsData);
       }
     } catch (error) {
       console.error('Error fetching settings:', error);
@@ -90,26 +101,16 @@ export default function Settings() {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) return;
+
     setIsSaving(true);
     setMessage('');
 
     try {
-      const response = await fetch('/api/user/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
-
-      if (response.ok) {
-        const updatedSettings = await response.json();
-        setSettings(updatedSettings);
-        setMessage('Settings saved successfully!');
-        setTimeout(() => setMessage(''), 3000);
-      } else {
-        const errorData = await response.json().catch(() => ({}));
-        console.error('Settings save error:', errorData);
-        setMessage(errorData.error || 'Failed to save settings');
-      }
+      await updateUserSettings(user.uid, formData as any);
+      setSettings(formData as UserSettings);
+      setMessage('Settings saved successfully!');
+      setTimeout(() => setMessage(''), 3000);
     } catch (error) {
       console.error('Error saving settings:', error);
       setMessage('Failed to save settings');

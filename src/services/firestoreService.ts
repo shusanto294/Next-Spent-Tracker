@@ -65,39 +65,43 @@ export async function getExpenses(userId: string, options: {
   limit?: number;
   lastDoc?: QueryDocumentSnapshot;
 } = {}) {
+  // Simple query without orderBy to avoid index requirement
   let q = query(
     collection(db, 'expenses'),
-    where('userId', '==', userId),
-    orderBy('date', 'desc')
+    where('userId', '==', userId)
   );
 
-  if (options.categoryId) {
-    q = query(q, where('categoryId', '==', options.categoryId));
-  }
-
-  if (options.startDate) {
-    q = query(q, where('date', '>=', Timestamp.fromDate(options.startDate)));
-  }
-
-  if (options.endDate) {
-    q = query(q, where('date', '<=', Timestamp.fromDate(options.endDate)));
-  }
-
-  if (options.limit) {
-    q = query(q, firestoreLimit(options.limit));
-  }
-
-  if (options.lastDoc) {
-    q = query(q, startAfter(options.lastDoc));
-  }
+  // Note: Removed orderBy, date filters, and categoryId filter to avoid index requirements
+  // Will filter and sort client-side instead
 
   const snapshot = await getDocs(q);
-  const expenses = snapshot.docs.map(doc => ({
+  let expenses = snapshot.docs.map(doc => ({
     id: doc.id,
     ...doc.data(),
     date: doc.data().date.toDate(),
     createdAt: doc.data().createdAt.toDate(),
   })) as Expense[];
+
+  // Apply filters client-side
+  if (options.categoryId) {
+    expenses = expenses.filter(exp => exp.categoryId === options.categoryId);
+  }
+
+  if (options.startDate) {
+    expenses = expenses.filter(exp => exp.date >= options.startDate!);
+  }
+
+  if (options.endDate) {
+    expenses = expenses.filter(exp => exp.date <= options.endDate!);
+  }
+
+  // Sort client-side by date descending
+  expenses.sort((a, b) => b.date.getTime() - a.date.getTime());
+
+  // Apply limit client-side
+  if (options.limit) {
+    expenses = expenses.slice(0, options.limit);
+  }
 
   return { expenses, lastDoc: snapshot.docs[snapshot.docs.length - 1] };
 }
@@ -154,28 +158,52 @@ export async function deleteExpensesByCategory(categoryId: string, userId: strin
 // ============= CATEGORIES =============
 
 export async function createCategory(category: Omit<Category, 'id' | 'createdAt'>) {
-  const categoryData = {
-    ...category,
-    createdAt: Timestamp.fromDate(new Date()),
-  };
+  try {
+    console.log('➕ firestoreService: Creating category:', category);
+    const categoryData = {
+      ...category,
+      createdAt: Timestamp.fromDate(new Date()),
+    };
 
-  const docRef = await addDoc(collection(db, 'categories'), categoryData);
-  return { id: docRef.id, ...category, createdAt: new Date() };
+    const docRef = await addDoc(collection(db, 'categories'), categoryData);
+    console.log('✅ firestoreService: Category created with ID:', docRef.id);
+    return { id: docRef.id, ...category, createdAt: new Date() };
+  } catch (error) {
+    console.error('❌ firestoreService: Error creating category:', error);
+    throw error;
+  }
 }
 
 export async function getCategories(userId: string) {
-  const q = query(
-    collection(db, 'categories'),
-    where('userId', '==', userId),
-    orderBy('order', 'asc')
-  );
+  try {
+    console.log('🔍 firestoreService: Getting categories for userId:', userId);
+    const q = query(
+      collection(db, 'categories'),
+      where('userId', '==', userId)
+      // Removed orderBy to avoid index requirement - will sort client-side
+    );
 
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => ({
-    id: doc.id,
-    ...doc.data(),
-    createdAt: doc.data().createdAt.toDate(),
-  })) as Category[];
+    const snapshot = await getDocs(q);
+    console.log('📊 firestoreService: Found', snapshot.docs.length, 'categories');
+
+    const categories = snapshot.docs.map(doc => {
+      const data = doc.data();
+      console.log('📄 Category doc:', doc.id, data);
+      return {
+        id: doc.id,
+        ...data,
+        createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(),
+      };
+    }) as Category[];
+
+    // Sort client-side by order field
+    categories.sort((a, b) => (a.order || 0) - (b.order || 0));
+
+    return categories;
+  } catch (error) {
+    console.error('❌ firestoreService: Error getting categories:', error);
+    throw error;
+  }
 }
 
 export async function getCategoryById(categoryId: string) {

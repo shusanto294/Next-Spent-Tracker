@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Plus, X, GripVertical } from 'lucide-react';
 import {
-  DndContext, 
+  DndContext,
   closestCenter,
   KeyboardSensor,
   PointerSensor,
@@ -21,9 +21,11 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useAuth } from '@/hooks/useAuth';
+import { getCategories, createCategory, reorderCategories, createExpense } from '@/services/firestoreService';
 
 interface Category {
-  _id: string;
+  id?: string;
   name: string;
   color: string;
   order: number;
@@ -33,14 +35,14 @@ interface ExpenseFormProps {
   onExpenseAdded: () => void;
 }
 
-function SortableCategory({ 
-  category, 
-  isSelected, 
-  onSelect 
-}: { 
-  category: Category; 
-  isSelected: boolean; 
-  onSelect: (categoryId: string) => void; 
+function SortableCategory({
+  category,
+  isSelected,
+  onSelect
+}: {
+  category: Category;
+  isSelected: boolean;
+  onSelect: (categoryId: string) => void;
 }) {
   const {
     attributes,
@@ -49,7 +51,7 @@ function SortableCategory({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: category._id });
+  } = useSortable({ id: category.id || '' });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -71,7 +73,7 @@ function SortableCategory({
       }`}
       {...attributes}
     >
-      <div 
+      <div
         {...listeners}
         className="cursor-grab active:cursor-grabbing p-1 hover:bg-black/10 rounded"
         title="Drag to reorder"
@@ -80,7 +82,7 @@ function SortableCategory({
       </div>
       <button
         type="button"
-        onClick={() => onSelect(category._id)}
+        onClick={() => onSelect(category.id || '')}
         className={`flex-1 text-left border-none outline-none ${isSelected ? 'text-white' : ''}`}
         style={{
           border: 'none',
@@ -94,6 +96,7 @@ function SortableCategory({
 }
 
 export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
+  const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
@@ -114,51 +117,68 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
   );
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && user) {
+      console.log('🔄 ExpenseForm: Fetching categories for user:', user.uid);
       fetchCategories();
     }
-  }, [isOpen]);
+  }, [isOpen, user]);
 
   const fetchCategories = async () => {
+    if (!user) {
+      console.log('❌ ExpenseForm: No user found, cannot fetch categories');
+      return;
+    }
+
     try {
-      const response = await fetch('/api/categories');
-      if (response.ok) {
-        const data = await response.json();
-        console.log('📦 Fetched categories with order:', data.map((cat: Category) => ({ name: cat.name, order: cat.order })));
-        setCategories(data);
-      }
+      console.log('📡 ExpenseForm: Calling getCategories for user:', user.uid);
+      const data = await getCategories(user.uid);
+      console.log('📦 ExpenseForm: Fetched categories:', data.length, 'items');
+      console.log('📦 ExpenseForm: Categories with order:', data.map((cat) => ({ id: cat.id, name: cat.name, order: cat.order })));
+      setCategories(data);
     } catch (error) {
-      console.error('Error fetching categories:', error);
+      console.error('❌ ExpenseForm: Error fetching categories:', error);
     }
   };
 
-  const createCategory = async () => {
-    if (!newCategoryName.trim()) return;
+  const createCategoryHandler = async () => {
+    if (!newCategoryName.trim()) {
+      console.log('❌ ExpenseForm: Category name is empty');
+      return;
+    }
+    if (!user) {
+      console.log('❌ ExpenseForm: No user found, cannot create category');
+      return;
+    }
 
     try {
-      const response = await fetch('/api/categories', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newCategoryName.trim() }),
+      console.log('➕ ExpenseForm: Creating new category:', newCategoryName.trim());
+      // Generate a random color for the category
+      const colors = ['#3B82F6', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316'];
+      const randomColor = colors[Math.floor(Math.random() * colors.length)];
+
+      const newCategory = await createCategory({
+        userId: user.uid,
+        name: newCategoryName.trim(),
+        color: randomColor,
+        order: categories.length,
       });
 
-      if (response.ok) {
-        const newCategory = await response.json();
-        // Refetch categories to get them in proper order
-        await fetchCategories();
-        setSelectedCategory(newCategory._id);
-        setFormData(prev => ({ ...prev, description: newCategory.name }));
-        setNewCategoryName('');
-        setShowNewCategory(false);
-      }
+      console.log('✅ ExpenseForm: Category created successfully:', newCategory.id);
+
+      // Refetch categories to get them in proper order
+      await fetchCategories();
+      setSelectedCategory(newCategory.id || '');
+      setFormData(prev => ({ ...prev, description: newCategory.name }));
+      setNewCategoryName('');
+      setShowNewCategory(false);
     } catch (error) {
-      console.error('Error creating category:', error);
+      console.error('❌ ExpenseForm: Error creating category:', error);
     }
   };
 
   const handleCategorySelect = (categoryId: string) => {
     setSelectedCategory(categoryId);
-    const selectedCat = categories.find(cat => cat._id === categoryId);
+    const selectedCat = categories.find(cat => cat.id === categoryId);
     if (selectedCat) {
       setFormData(prev => ({ ...prev, description: selectedCat.name }));
     }
@@ -169,14 +189,14 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
 
     if (active.id !== over?.id) {
       setCategories((items) => {
-        const oldIndex = items.findIndex((item) => item._id === active.id);
-        const newIndex = items.findIndex((item) => item._id === over?.id);
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over?.id);
 
         const newItems = arrayMove(items, oldIndex, newIndex);
-        
+
         // Update order in database
         updateCategoryOrder(newItems);
-        
+
         return newItems;
       });
     }
@@ -185,21 +205,11 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
   const updateCategoryOrder = async (reorderedCategories: Category[]) => {
     try {
       const categoryOrders = reorderedCategories.map((category, index) => ({
-        categoryId: category._id,
+        categoryId: category.id || '',
         order: index,
       }));
 
-      const response = await fetch('/api/categories/reorder', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ categoryOrders }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Error updating category order:', response.status, errorData);
-        throw new Error(`Failed to update category order: ${response.status}`);
-      }
+      await reorderCategories(categoryOrders);
     } catch (error) {
       console.error('Error updating category order:', error);
     }
@@ -207,27 +217,22 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedCategory || !formData.amount) return;
+    if (!selectedCategory || !formData.amount || !user) return;
 
     setIsLoading(true);
     try {
-      const response = await fetch('/api/expenses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: formData.amount,
-          description: formData.description || categories.find(cat => cat._id === selectedCategory)?.name || 'Expense',
-          categoryId: selectedCategory,
-          date: selectedDate.toISOString(),
-        }),
+      await createExpense({
+        userId: user.uid,
+        amount: parseFloat(formData.amount),
+        description: formData.description || categories.find(cat => cat.id === selectedCategory)?.name || 'Expense',
+        categoryId: selectedCategory,
+        date: selectedDate,
       });
 
-      if (response.ok) {
-        setFormData({ amount: '', description: '' });
-        setSelectedCategory('');
-        setIsOpen(false);
-        onExpenseAdded();
-      }
+      setFormData({ amount: '', description: '' });
+      setSelectedCategory('');
+      setIsOpen(false);
+      onExpenseAdded();
     } catch (error) {
       console.error('Error adding expense:', error);
     } finally {
@@ -274,21 +279,22 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
               Category
               <span className="text-xs text-gray-500 ml-2">(drag to reorder)</span>
             </label>
-            <DndContext 
-              sensors={sensors} 
-              collisionDetection={closestCenter} 
+
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
               onDragEnd={handleDragEnd}
             >
-              <SortableContext 
-                items={categories.map(cat => cat._id)} 
+              <SortableContext
+                items={categories.map(cat => cat.id || '')}
                 strategy={verticalListSortingStrategy}
               >
                 <div className="flex flex-col gap-2 mb-2">
                   {categories.map((category) => (
                     <SortableCategory
-                      key={category._id}
+                      key={category.id}
                       category={category}
-                      isSelected={selectedCategory === category._id}
+                      isSelected={selectedCategory === category.id}
                       onSelect={handleCategorySelect}
                     />
                   ))}
@@ -315,7 +321,7 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
                 <div className="flex gap-2">
                   <button
                     type="button"
-                    onClick={createCategory}
+                    onClick={createCategoryHandler}
                     className="flex-1 sm:flex-none px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm"
                   >
                     Add

@@ -13,7 +13,14 @@
       "Bash(pkill:*)",
       "Bash(taskkill:*)",
       "mcp__ide__getDiagnostics",
-      "Bash(npm uninstall:*)"
+      "Bash(npm uninstall:*)",
+      "Bash(git log:*)",
+      "Bash(git push:*)",
+      "Bash(node:*)",
+      "Bash(firebase login:*)",
+      "Bash(firebase deploy:*)",
+      "Bash(firebase projects:list:*)",
+      "Bash(cat:*)"
     ],
     "deny": []
   }
