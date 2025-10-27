@@ -22,7 +22,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useAuth } from '@/hooks/useAuth';
-import { getCategories, createCategory, reorderCategories, createExpense } from '@/services/firestoreService';
+import { getCategories, createCategory, reorderCategories, createExpense, getUserSettings } from '@/services/firestoreService';
 
 interface Category {
   id?: string;
@@ -108,6 +108,7 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
   });
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [isLoading, setIsLoading] = useState(false);
+  const [userTimezone, setUserTimezone] = useState<string>('');
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -120,8 +121,17 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
     if (isOpen && user) {
       console.log('🔄 ExpenseForm: Fetching categories for user:', user.uid);
       fetchCategories();
+      fetchUserTimezone();
     }
   }, [isOpen, user]);
+
+  // Update the date whenever the form opens or user timezone changes
+  useEffect(() => {
+    if (isOpen && userTimezone) {
+      const currentDate = getCurrentDateInTimezone(userTimezone);
+      setSelectedDate(currentDate);
+    }
+  }, [isOpen, userTimezone]);
 
   const fetchCategories = async () => {
     if (!user) {
@@ -139,6 +149,39 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
       console.error('❌ ExpenseForm: Error fetching categories:', error);
     }
   };
+
+  const fetchUserTimezone = async () => {
+    if (!user) return;
+
+    try {
+      const settings = await getUserSettings(user.uid);
+      if (settings?.timezone) {
+        setUserTimezone(settings.timezone);
+      } else {
+        // Fallback to browser timezone
+        setUserTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+      }
+    } catch (error) {
+      console.error('Error fetching user timezone:', error);
+      setUserTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    }
+  };
+
+// Get current date in user's timezone
+const getCurrentDateInTimezone = (timezone: string): Date => {
+  const now = new Date();
+  
+  // Get the date components in the user's timezone
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  const userDateString = formatter.format(now);
+  return new Date(userDateString);
+};
 
   const createCategoryHandler = async () => {
     if (!newCategoryName.trim()) {
@@ -360,7 +403,7 @@ export default function ExpenseForm({ onExpenseAdded }: ExpenseFormProps) {
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-base"
               value={selectedDate.toISOString().split('T')[0]}
               onChange={(e) => setSelectedDate(new Date(e.target.value))}
-              max={new Date().toISOString().split('T')[0]}
+              max={userTimezone ? getCurrentDateInTimezone(userTimezone).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]}
             />
           </div>
 

@@ -367,14 +367,16 @@ export default function Dashboard() {
   // Get paginated recent expenses
   const getPaginatedExpenses = () => {
     const itemsPerPage = 10;
-    let expensesToShow = allExpenses;
 
-    // Filter by category if selected
+    // First filter by date period (same logic as calculatePeriodExpenses)
+    let expensesToShow = calculatePeriodExpenses();
+
+    // Then filter by category if selected
     if (selectedCategoryId) {
       expensesToShow = expensesToShow.filter((expense) => expense.categoryId === selectedCategoryId);
     }
 
-    // Sort by date descending
+    // Sort by date descending (latest first)
     expensesToShow = [...expensesToShow].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
     const totalItems = expensesToShow.length;
@@ -539,12 +541,7 @@ export default function Dashboard() {
                   >
                     <ChevronRight size={16} />
                   </button>
-                  <button
-                    onClick={() => handleDateChange(getCurrentDateInUserTimezone())}
-                    className="px-2 sm:px-3 py-1 rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 text-sm"
-                  >
-                    Today
-                  </button>
+
                 </div>
               </div>
             </div>
