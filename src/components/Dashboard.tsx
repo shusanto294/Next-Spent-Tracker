@@ -678,8 +678,9 @@ export default function Dashboard() {
                               {expense.description}
                             </p>
                             <p className="text-xs sm:text-sm text-gray-500 truncate">
-                              {expense.category?.name || new Date(expense.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} • {' '}
-                              {new Date(expense.date).toLocaleDateString()}
+                              {expense.category?.name} • {' '}
+                              {new Date(expense.createdAt).toLocaleDateString()} • {' '}
+                              {new Date(expense.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
                             </p>
                           </div>
                         </div>
