@@ -376,8 +376,8 @@ export default function Dashboard() {
       expensesToShow = expensesToShow.filter((expense) => expense.categoryId === selectedCategoryId);
     }
 
-    // Sort by date descending (latest first)
-    expensesToShow = [...expensesToShow].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    // Sort by createdAt descending (latest first)
+    expensesToShow = [...expensesToShow].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     const totalItems = expensesToShow.length;
     const totalPages = Math.ceil(totalItems / itemsPerPage);
